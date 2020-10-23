@@ -86,7 +86,7 @@ if __name__ == '__main__':
     test_texts = None
     first_get_dataset = False
     if dataset == 'imdb':
-        train_texts, train_labels, test_texts, test_labels = split_imdb_files()
+        train_texts, train_labels, dev_texts, dev_labels, test_texts, test_labels = split_imdb_files()
         if args.level == 'word':
             x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
         elif args.level == 'char':

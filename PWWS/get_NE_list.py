@@ -382,7 +382,7 @@ if __name__ == '__main__':
     class_num = config.num_classes[args.dataset]
 
     if args.dataset == 'imdb':
-        train_texts, train_labels, test_texts, test_labels = split_imdb_files()
+        train_texts, train_labels, dev_texts, dev_labels, test_texts, test_labels = split_imdb_files()
         # get input texts in different classes
         pos_texts = train_texts[:12500]
         pos_texts.extend(test_texts[:12500])

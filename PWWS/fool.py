@@ -61,7 +61,7 @@ def fool_text_classifier():
     x_test = y_test = None
     test_texts = None
     if dataset == 'imdb':
-        train_texts, train_labels, test_texts, test_labels = split_imdb_files()
+        train_texts, train_labels, dev_texts, dev_labels, test_texts, test_labels = split_imdb_files()
         if args.level == 'word':
             x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
         elif args.level == 'char':
@@ -163,7 +163,7 @@ def fool_text_classifier_pytorch(model, dataset='imdb'):
     x_test = y_test = None
     test_texts = None
     if dataset == 'imdb':
-        train_texts, train_labels, test_texts, test_labels = split_imdb_files()
+        train_texts, train_labels, dev_texts, dev_labels, test_texts, test_labels = split_imdb_files()
         x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
 
     elif dataset == 'agnews':

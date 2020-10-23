@@ -59,3 +59,36 @@ def evaluate_word_saliency(doc, grad_guide, tokenizer, input_y, dataset, level):
         position_word_list.append((word[0], word[1]))
 
     return position_word_list, word_saliency_list
+
+
+def evaluate_word_saliency_snli(doc_p, doc_h, grad_guide, tokenizer, input_y, dataset, level):
+    word_saliency_list = []
+
+    # zero the code of the current word and calculate the amount of change in the classification probability
+    if level == 'word':
+        max_len = config.word_max_len[dataset]
+        text_p = [doc_p[position].text for position in range(len(doc_p))]
+        text_p = ' '.join(text_p)
+        origin_vector_p = text_to_vector(text_p, tokenizer, dataset)
+        text_h = [doc_h[position].text for position in range(len(doc_h))]
+        text_h = ' '.join(text_h)
+        origin_vector_h = text_to_vector(text_h, tokenizer, dataset)
+        origin_prob = grad_guide.predict_prob(input_vector_p=origin_vector_p, input_vector_h=origin_vector_h)
+        #attack h
+        for position in range(len(doc_h)):
+            if position >= max_len:
+                break
+            # get x_i^(\hat)
+            without_word_vector_h = copy.deepcopy(origin_vector_h)
+            without_word_vector_h[0][position] = 0
+            prob_without_word = grad_guide.predict_prob(input_vector_p=origin_vector_p, input_vector_h=without_word_vector_h)
+
+            # calculate S(x,w_i) defined in Eq.(6)
+            word_saliency = origin_prob[input_y] - prob_without_word[input_y]
+            word_saliency_list.append((position, doc_h[position], word_saliency, doc_h[position].tag_))
+
+    position_word_list = []
+    for word in word_saliency_list:
+        position_word_list.append((word[0], word[1]))
+
+    return position_word_list, word_saliency_list

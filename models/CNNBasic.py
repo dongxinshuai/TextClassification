@@ -1,8 +1,14 @@
 # -*- coding: utf-8 -*-
+import torch
 import torch as t
 import numpy as np
 from torch import nn
 from .BaseModel import BaseModel
+from .BaseModelAdv import AdvBaseModel
+import torch.nn as nn
+import torch.nn.functional as F
+
+
 class BasicCNN1D(BaseModel): 
     def __init__(self, opt ):
         super(BasicCNN1D, self).__init__(opt)
@@ -42,6 +48,82 @@ class BasicCNN1D(BaseModel):
         embd = self.text_to_embd(content)
         logits = self.embd_to_logit(embd)
         return logits
+
+class AdvBasicCNN1D(AdvBaseModel): 
+    def __init__(self, opt ):
+        super(AdvBasicCNN1D, self).__init__(opt)
+
+        self.content_dim=opt.__dict__.get("content_dim",256)
+        self.kernel_size=opt.__dict__.get("kernel_size",3)
+
+        self.content_conv = nn.Sequential(
+            nn.Conv1d(in_channels = self.embedding_out_dim,
+                      out_channels = self.content_dim, #256
+                      kernel_size = self.kernel_size), #3
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size = (opt.max_seq_len - self.kernel_size + 1)),
+            #nn.MeanPool1d(kernel_size = (opt.max_seq_len - self.kernel_size + 1))
+#            nn.AdaptiveMaxPool1d()
+        )
+        self.fc = nn.Linear(self.content_dim, opt.label_size)
+        self.properties.update(
+                {"content_dim":self.content_dim,
+                 "kernel_size":self.kernel_size,
+                })
+        self.dropout = nn.Dropout(opt.keep_dropout)
+
+    def embd_to_logit(self, embd):
+        content_out = self.content_conv(embd.permute(0,2,1)) #64x256x1
+        reshaped = content_out.view(content_out.size(0), -1) #64x256
+        reshaped = self.dropout(reshaped)
+        logits = self.fc(reshaped) #64x3
+        return logits
+
+
+
+class AdvBasicCNN2D(AdvBaseModel):
+    """
+    A CNN for text classification.
+    Uses an embedding layer, followed by a convolutional, max-pooling and softmax layer.
+    """
+    def __init__(self, opt):
+        super(AdvBasicCNN2D, self).__init__(opt)
+
+        self.keep_dropout = opt.keep_dropout
+        in_channel = 1
+        self.kernel_nums = (64,64,64,64)
+        self.kernel_sizes = (1,2,3,5)
+        self.out_channel = self.kernel_nums[0]
+
+        self.conv = nn.ModuleList([nn.Conv2d(in_channel, out_channel, (K, self.embedding_out_dim)) for K,out_channel in zip(self.kernel_sizes,self.kernel_nums)])
+
+        self.dropout = nn.Dropout(self.keep_dropout)
+        self.fc = nn.Linear(len(self.kernel_sizes) * self.out_channel, self.label_size)
+        
+        self.properties.update(
+                {"kernel_nums":self.kernel_nums,
+                 "kernel_sizes":self.kernel_sizes,
+                })
+
+    def embd_to_logit(self, x):
+        # Conv & max pool
+        x = x.unsqueeze(1)  # dim: (batch_size, 1, max_seq_len, embedding_size)
+
+        # turns to be a list: [ti : i \in kernel_sizes] where ti: tensor of dim([batch, num_kernels, max_seq_len-i+1])
+        x = [F.relu(conv(x)).squeeze(3) for conv in self.conv]
+
+        # dim: [(batch_size, num_kernels), ...]*len(kernel_sizes)
+        x = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in x]
+        x = torch.cat(x, 1)
+
+        # Dropout & output
+        x = self.dropout(x)  # (batch_size,len(kernel_sizes)*num_kernels)
+        logit = F.log_softmax(self.fc(x))  # (batch_size, num_aspects)
+
+        return logit
+
+
+
 
 from models.BaseModel import BaseModel
 class BasicCNN2D(BaseModel):

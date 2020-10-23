@@ -10,6 +10,10 @@ import time
 import sys
 import logging
 import os,configparser,re
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 
 def log_time_delta(func):
     @wraps(func)
@@ -72,14 +76,35 @@ def loadData(opt):
         
         return train_iter, test_iter
 
-
-def evaluation(opt, model,test_iter,from_torchtext=True):
+def snli_evaluation(opt, device, model,test_iter):
     model.eval()
     accuracy=[]
 #    batch= next(iter(test_iter))
     for index,batch in enumerate( test_iter):
-        text = batch.text[0] if from_torchtext else batch.text
-        label=batch.label
+        x_p = batch[0].to(device)
+        x_h = batch[1].to(device)
+        label = batch[2].to(device)
+        x_p_mask= batch[7].to(device)
+        x_h_mask= batch[8].to(device)
+
+        predicted = model(mode='text_to_logit',x_p=x_p, x_h=x_h,x_p_mask=x_p_mask, x_h_mask=x_h_mask)
+        prob, idx = torch.max(predicted, 1) 
+        percision=(idx==label).float().mean()
+        
+        if torch.cuda.is_available():
+            accuracy.append(percision.data.item() )
+        else:
+            accuracy.append(percision.data.numpy()[0] )
+    model.train()
+    return np.mean(accuracy)
+
+def evaluation(opt, device, model,test_iter):
+    model.eval()
+    accuracy=[]
+#    batch= next(iter(test_iter))
+    for index,batch in enumerate( test_iter):
+        text = batch[0].to(device)
+        label = batch[1].to(device)
 
         predicted = model(mode='text_to_logit',input=text)
         prob, idx = torch.max(predicted, 1) 
@@ -92,34 +117,56 @@ def evaluation(opt, model,test_iter,from_torchtext=True):
     model.train()
     return np.mean(accuracy)
 
-def evaluation_adv(opt, model,test_iter,from_torchtext=True):
+
+def snli_evaluation_adv(opt, device, model,test_iter,tokenizer):
     model.eval()
     accuracy=[]
 #    batch= next(iter(test_iter))
     for index,batch in enumerate( test_iter):
-        text = batch.text[0] if from_torchtext else batch.text
-        label=batch.label
+        x_p = batch[0].to(device)
+        x_h = batch[1].to(device)
+        label = batch[2].to(device)
+        x_p_text_like_syn= batch[3].to(device)
+        x_p_text_like_syn_valid= batch[4].to(device)
+        x_h_text_like_syn= batch[5].to(device)
+        x_h_text_like_syn_valid= batch[6].to(device)
+        x_p_mask= batch[7].to(device)
+        x_h_mask= batch[8].to(device)
 
-        set_radius = opt.test_attack_eps
+        batch_size = len(x_p)
+        if index*batch_size > 9842:
+            break
+
         attack_type_dict = {
             'num_steps': opt.test_attack_iters,
-            'step_size': opt.test_attack_step_size * set_radius,
-            'random_start': opt.random_start,
-            'epsilon':  set_radius,
             'loss_func': 'ce',
-            'direction': 'away',
+            'w_optm_lr': opt.w_optm_lr,
+            'sparse_weight': opt.attack_sparse_weight,
+            'out_type': "text",
+            'attack_hypo_only': True,
         }
-        embd = model(mode="text_to_embd", input=text)
+        embd_p, embd_h = model(mode="text_to_embd", x_p=x_p, x_h=x_h) #in bs, len sent, vocab
+        assert(x_p_text_like_syn.shape == x_h_text_like_syn.shape)
+        n,l,s = x_p_text_like_syn.shape
+        x_p_text_like_syn_embd, x_h_text_like_syn_embd = model(mode="text_to_embd", x_p=x_p_text_like_syn.reshape(n,l*s), x_h=x_h_text_like_syn.reshape(n,l*s))
+        x_p_text_like_syn_embd = x_p_text_like_syn_embd.reshape(n,l,s,-1)
+        x_h_text_like_syn_embd = x_h_text_like_syn_embd.reshape(n,l,s,-1)
 
-        #embd_radius = model(mode="text_to_radius", input=text)
-        #attack_type_dict['step_size'] = embd_radius
-        #attack_type_dict['epsilon'] = embd_radius
+        adv_x_p, adv_x_h = model(mode="get_adv_by_convex_syn", x_p=embd_p, x_h=embd_h, label=label, 
+            x_p_text_like_syn = x_p_text_like_syn,
+            x_p_text_like_syn_embd=x_p_text_like_syn_embd, x_p_text_like_syn_valid=x_p_text_like_syn_valid, 
+            x_h_text_like_syn = x_h_text_like_syn,
+            x_h_text_like_syn_embd=x_h_text_like_syn_embd, x_h_text_like_syn_valid=x_h_text_like_syn_valid,
+            x_p_mask=x_p_mask, x_h_mask=x_h_mask,
+            attack_type_dict=attack_type_dict)
 
-        embd_adv = model(mode="get_embd_adv", input=embd, label=label, attack_type_dict=attack_type_dict)
-        predicted_adv = model(mode="embd_to_logit", input=embd_adv)
+        predicted = model(mode='text_to_logit',x_p=x_p, x_h=adv_x_h, x_p_mask=x_p_mask, x_h_mask=x_h_mask)
+        #print("_________________________________")
+        #print(inverse_tokenize(tokenizer, x_h[0]))
+        #print(inverse_tokenize(tokenizer, adv_x_h[0]))
 
-        prob, idx = torch.max(predicted_adv, 1) 
-        percision=(idx==label ).float().mean()
+        prob, idx = torch.max(predicted, 1) 
+        percision=(idx==label).float().mean()
         
         if torch.cuda.is_available():
             accuracy.append(percision.data.item() )
@@ -128,6 +175,102 @@ def evaluation_adv(opt, model,test_iter,from_torchtext=True):
     model.train()
     return np.mean(accuracy)
 
+def evaluation_adv(opt, device, model, test_iter, tokenizer):
+    model.eval()
+    accuracy=[]
+    record_for_vis = {}
+    record_for_vis["comb_p_list"] = []
+    record_for_vis["embd_syn_list"] = []
+    record_for_vis["syn_valid_list"] = []
+    record_for_vis["text_syn_list"] = []
+
+#    batch= next(iter(test_iter))
+    if opt.pert_set=="convex_combination":
+        print("ad test by convex_combination.")
+    for index,batch in enumerate( test_iter):
+        text = batch[0].to(device)
+        label = batch[1].to(device)
+        text_like_syn= batch[6].to(device)
+        text_like_syn_valid= batch[7].to(device)
+
+        batch_size = len(text)
+        #if index*batch_size > 1000:
+        #    break
+
+        attack_type_dict = {
+            'num_steps': opt.test_attack_iters,
+            'loss_func': 'ce',
+            'w_optm_lr': opt.w_optm_lr,
+            'sparse_weight': opt.attack_sparse_weight,
+            'out_type': "text"
+        }
+        embd = model(mode="text_to_embd", input=text) #in bs, len sent, vocab
+        n,l,s = text_like_syn.shape
+        text_like_syn_embd = model(mode="text_to_embd", input=text_like_syn.reshape(n,l*s)).reshape(n,l,s,-1)
+        text_adv = model(mode="get_adv_by_convex_syn", input=embd, label=label, text_like_syn_embd=text_like_syn_embd, text_like_syn_valid=text_like_syn_valid, text_like_syn=text_like_syn, attack_type_dict=attack_type_dict, text_for_vis=text, record_for_vis=record_for_vis)
+        predicted_adv = model(mode="text_to_logit", input=text_adv)
+
+        #print("_________________________________")
+        #print(inverse_tokenize(tokenizer, text[0]))
+        #print(inverse_tokenize(tokenizer, text_adv[0]))
+
+        prob, idx = torch.max(predicted_adv, 1) 
+        percision=(idx==label).float().mean()
+        
+        if torch.cuda.is_available():
+            accuracy.append(percision.data.item() )
+        else:
+            accuracy.append(percision.data.numpy()[0] )
+    model.train()
+
+
+    return np.mean(accuracy)
+
+
+
+def evaluation_hotflip_adv(opt, device, model, test_iter, tokenizer):
+    model.eval()
+    accuracy=[]
+
+    for index,batch in enumerate( test_iter):
+        text = batch[0].to(device)
+        label = batch[1].to(device)
+        text_like_syn= batch[6].to(device)
+        text_like_syn_valid= batch[7].to(device)
+
+        batch_size = len(text)
+
+        batch_size = len(text)
+        if index*batch_size > 200:
+            break
+
+        attack_type_dict = {
+            'num_steps': opt.test_attack_iters,
+            'loss_func': 'ce',
+        }
+        text_adv = model(mode="get_adv_hotflip", input=text, label=label, text_like_syn_valid=text_like_syn_valid, text_like_syn=text_like_syn, attack_type_dict=attack_type_dict)
+        
+        predicted_adv = model(mode="text_to_logit", input=text_adv)
+
+        #print("_________________________________")
+        #print(inverse_tokenize(tokenizer, text[0]))
+        #print(inverse_tokenize(tokenizer, text_adv[0]))
+
+        prob, idx = torch.max(predicted_adv, 1) 
+        percision=(idx==label).float().mean()
+        
+        if torch.cuda.is_available():
+            accuracy.append(percision.data.item() )
+        else:
+            accuracy.append(percision.data.numpy()[0] )
+    model.train()
+
+
+    return np.mean(accuracy)
+
+def inverse_tokenize(tokenizer, tokenized):
+    result = tokenizer.sequences_to_texts([tokenized.cpu().numpy()])
+    return result[0]
 
 def getOptimizer(params,name="adam",lr=1,weight_decay=1e-4, momentum=None,scheduler=None):
     

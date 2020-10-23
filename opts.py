@@ -15,8 +15,8 @@ class Params(object):
     
         parser.add_argument('--max_seq_len', type=int, default=400,
                         help='max_seq_len')
-        parser.add_argument('--batch_size', type=int, default=64,
                         help='batch_size')
+        parser.add_argument('--batch_size', type=int, default=64,
         parser.add_argument('--embedding_dim', type=int, default=300,
                         help='embedding_dim')
         parser.add_argument('--learning_rate', type=float, default=2e-5,
@@ -169,14 +169,66 @@ def parse_opt():
     parser = argparse.ArgumentParser()
     # Data input settings
 
-    parser.add_argument('--weight_adv', type=float, default=1, help='') 
-    parser.add_argument('--weight_clean', type=float, default=1, help='') 
-    parser.add_argument('--weight_ball', type=float, default=1, help='') 
+    parser.add_argument('--smooth_ce', type=str, default='false', help='')
 
-    parser.add_argument('--new_exp', type=str, default='false',
-                help='')
+    parser.add_argument('--if_ce_adp', type=str, default='false', help='')
+    
+    parser.add_argument('--h_test_start', type=int, default=0, help='')
 
-    parser.add_argument('--test_attack_iters', type=int, default=7,
+    parser.add_argument('--vis_w_key_token', type=int, default=None, help='')
+
+    parser.add_argument('--snli_epochs', type=int, default=81, help='')
+
+    parser.add_argument('--resume_vector_only', type=str, default='false', help='')
+
+    parser.add_argument('--l2_ball_range', type=str, default='sentence', help='')
+
+    parser.add_argument('--normalize_embedding', type=str, default='false', help='')
+
+    parser.add_argument('--lm_constraint', type=str, default='true', help='')
+
+    parser.add_argument('--label_smooth', type=float, default=0, help='')
+
+    parser.add_argument('--imdb_lm_file', type=str, default="lm_scores/imdb_all.txt", help='') 
+    parser.add_argument('--snli_lm_file', type=str, default="lm_scores/snli_all_save.txt", help='') 
+
+    parser.add_argument('--embd_freeze', type=str, default='false', help='')
+
+    parser.add_argument('--embd_fc_freeze', type=str, default='false', help='')
+
+    parser.add_argument('--embd_transform', type=str, default='true', help='')
+
+    parser.add_argument('--certified_neighbors_file', type=str, default="counterfitted_neighbors.json", help='') 
+
+    parser.add_argument('--train_attack_sparse_weight', type=float, default=5, help='') 
+
+    parser.add_argument('--attack_sparse_weight', type=float, default=5, help='') 
+
+    parser.add_argument('--w_optm_lr', type=float, default=10, help='') 
+
+    parser.add_argument('--pert_set', type=str, default='ad_text', help='')
+
+    parser.add_argument('--ge_file', type=str, default='../../GraphEmbedding/examples/walk_embeddings_it2.pickle', help='')
+
+    parser.add_argument('--out_syn_netx_file', type=str, default='false', help='')
+
+    parser.add_argument('--resume', type=str, default=None, help='') 
+
+    parser.add_argument('--pwws_test_num', type=int, default=1000, help='') 
+    parser.add_argument('--genetic_test_num', type=int, default=1000, help='') 
+    parser.add_argument('--genetic_iters', type=int, default=40, help='') 
+    parser.add_argument('--genetic_pop_size', type=int, default=60, help='') 
+
+    parser.add_argument('--kl_start_epoch', type=int, default=0, help='') 
+
+    parser.add_argument('--weight_adv', type=float, default=0, help='') 
+    parser.add_argument('--weight_clean', type=float, default=0, help='') 
+    parser.add_argument('--weight_ball', type=float, default=0, help='') 
+    parser.add_argument('--weight_kl', type=float, default=0, help='') 
+
+    parser.add_argument('--new_exp', type=str, default='false', help='')
+
+    parser.add_argument('--test_attack_iters', type=int, default=40,
                     help='') 
     parser.add_argument('--test_attack_eps', type=float, default=1,
                     help='') 
@@ -185,10 +237,11 @@ def parse_opt():
 
     parser.add_argument('--random_start', type=str, default='true', help='')
 
-    parser.add_argument('--train_attack_iters', type=int, default=7,
+    parser.add_argument('--train_attack_iters', type=int, default=10,
                     help='') 
-    parser.add_argument('--train_attack_eps', type=float, default=1,
-                    help='') 
+                    
+    parser.add_argument('--train_attack_eps', type=float, default=5.0, help='') 
+
     parser.add_argument('--train_attack_step_size', type=float, default=0.25,
                     help='') 
 
@@ -196,9 +249,13 @@ def parse_opt():
 
     parser.add_argument('--synonyms_file_path', type=str, default="temp/imdb.synonyms.new",
                     help='')
+    parser.add_argument('--snli_synonyms_file_path', type=str, default="temp/snli.synonyms.new",
+                    help='')
 
     parser.add_argument('--synonyms_from_file', type=str, default='true',
                     help='')
+
+    parser.add_argument('--bow_mean', type=str, default='false', help='')
 
     parser.add_argument('--data_file_path', type=str, default="temp/imdb_cnn_adv_all",
                     help='')
@@ -206,13 +263,14 @@ def parse_opt():
     parser.add_argument('--data_from_file', type=str, default='true',
                     help='')
 
-    parser.add_argument('--from_PWWS', type=str, default='true',
-                    help='')
+    parser.add_argument('--embedding_prep', type=str, default='ori', help='')
+
+    parser.add_argument('--from_PWWS', type=str, default='true', help='')
 
     parser.add_argument('--out_path', type=str, default="./",
                     help='')
                     
-    parser.add_argument('--train_mode', type=str, default="clean",
+    parser.add_argument('--train_mode', type=str, default="set_radius_ad",
                     help='')
 
     parser.add_argument('--config', type=str, default="no_file_exists",
@@ -226,27 +284,32 @@ def parse_opt():
     parser.add_argument('--batch_size', type=int, default=64,
                     help='batch_size') 
 
+    parser.add_argument('--test_batch_size', type=int, default=64,
+                    help='test_batch_size') 
+
     parser.add_argument('--syn_batch_size', type=int, default=2048,
                     help='syn_batch_size')
-    parser.add_argument('--embedding_dim', type=int, default=300,
-                    help='embedding_dim')
+
+    parser.add_argument('--embedding_dim', type=int, default=300, help='embedding_dim')
+
+    parser.add_argument('--embedding_out_dim', type=int, default=100, help='embedding_dim')
     
-    #parser.add_argument('--learning_rate', type=float, default=1e-3, help='learning_rate')
-    parser.add_argument('--learning_rate', type=float, default=1, help='learning_rate')
-    parser.add_argument('--ball_learning_rate', type=float, default=1, help='learning_rate')
+    parser.add_argument('--learning_rate', type=float, default=5e-3, help='learning_rate')
+    #parser.add_argument('--learning_rate', type=float, default=0.01, help='learning_rate')
+    parser.add_argument('--ball_learning_rate', type=float, default=0.01, help='learning_rate')
 
-    parser.add_argument('--weight_decay', type=float, default=1e-4, help='weight_decay')
-    parser.add_argument('--ball_weight_decay', type=float, default=1e-5, help='weight_decay')
+    parser.add_argument('--weight_decay', type=float, default=2e-4, help='weight_decay')
+    parser.add_argument('--ball_weight_decay', type=float, default=2e-4, help='weight_decay')
 
-    #parser.add_argument('--optimizer', type=str, default="adam", help='optimizer')
-    parser.add_argument('--optimizer', type=str, default="sgd", help='optimizer')
+    parser.add_argument('--optimizer', type=str, default="adam", help='optimizer')
+    #parser.add_argument('--optimizer', type=str, default="sgd", help='optimizer')
     parser.add_argument('--ball_optimizer', type=str, default="sgd", help='ball_optimizer')
 
     parser.add_argument('--lr_scheduler', type=str, default="none", help='lr_scheduler')
 
     parser.add_argument('--grad_clip', type=float, default=1e-1, help='grad_clip')
             
-    parser.add_argument('--model', type=str, default="bilstm",
+    parser.add_argument('--model', type=str, default="cnn_adv",
                     help='model name')
 
     parser.add_argument('--dataset', type=str, default="imdb",
@@ -259,7 +322,7 @@ def parse_opt():
                     help='keep_dropout')
     parser.add_argument('--max_epoch', type=int, default=200,
                     help='max_epoch')
-    parser.add_argument('--embedding_file', type=str, default="glove.6b.300",
+    parser.add_argument('--embedding_file', type=str, default="/home/xsdong/00_Code/nlp_course/certified-word-sub/data/glove/glove.840B.300d.txt",
                     help='glove or w2v')
     parser.add_argument('--embedding_training', type=str, default="false",
                     help='embedding_training')

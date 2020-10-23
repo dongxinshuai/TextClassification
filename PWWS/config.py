@@ -1,8 +1,8 @@
 class Config(object):
-    num_classes = {'imdb': 2, 'yahoo': 10, 'agnews': 4}
-    word_max_len = {'imdb': 400, 'yahoo': 1000, 'agnews': 150}
+    num_classes = {'imdb': 2, 'yahoo': 10, 'agnews': 4, 'snli': 3}
+    word_max_len = {'imdb': 300, 'yahoo': 1000, 'agnews': 150, 'snli': 80}
     char_max_len = {'agnews': 1014}
-    num_words = {'imdb': 100000, 'yahoo': 20000, 'agnews': 5000}
+    num_words = {'imdb': 80000, 'yahoo': 20000, 'agnews': 5000, 'snli': 50000}
 
     wordCNN_batch_size = {'imdb': 32, 'yahoo': 32, 'agnews': 32}
     wordCNN_epochs = {'imdb': 2, 'yahoo': 6, 'agnews': 2}

@@ -99,6 +99,7 @@ def _synonym_prefilter_fn(token, synonym):
         return True
 
 
+
 def _generate_synonym_candidates(token, token_position, rank_fn=None):
     '''
     Generate synonym candidates.
@@ -138,6 +139,45 @@ def _generate_synonym_candidates(token, token_position, rank_fn=None):
             candidates.append(candidate)
     return candidates
 
+import json
+with open("counterfitted_neighbors.json") as f:
+    syn_dict = json.load(f)
+
+
+def _generate_synonym_candidates_from_dict(token, token_position, rank_fn=None):
+    '''
+    Generate synonym candidates.
+    For each token in the doc, the list of WordNet synonyms is expanded.
+    :return candidates, a list, whose type of element is <class '__main__.SubstitutionCandidate'>
+            like SubstitutionCandidate(token_position=0, similarity_rank=10, original_token=Soft, candidate_word='subdued')
+    '''
+    if rank_fn is None:
+        rank_fn = vsm_similarity
+
+    candidates = []
+    word = token.text
+
+    """
+    candidate = SubstitutionCandidate(
+        token_position=token_position,
+        similarity_rank=None,
+        original_token=token,
+        candidate_word=word)
+    candidates.append(candidate)
+    """
+    
+    if not word in syn_dict:
+        return candidates
+    else:
+        for candidate_word in syn_dict[word]:
+            candidate = SubstitutionCandidate(
+                token_position=token_position,
+                similarity_rank=None,
+                original_token=token,
+                candidate_word=candidate_word)
+            candidates.append(candidate)
+        return candidates
+
 def generate_synonym_list_from_word(word):
     '''
     Generate synonym candidates.
@@ -150,11 +190,12 @@ def generate_synonym_list_from_word(word):
 
     candidate_set = set()
 
-    if token.tag_ in supported_pos_tags:
+    #if token.tag_ in supported_pos_tags:
+    if True:
         wordnet_pos = _get_wordnet_pos(token)  # 'r', 'a', 'n', 'v' or None
         wordnet_synonyms = []
 
-        synsets = wn.synsets(token.text, pos=wordnet_pos)
+        synsets = wn.synsets(token.text)
         for synset in synsets:
             wordnet_synonyms.extend(synset.lemmas())
 
@@ -173,6 +214,18 @@ def generate_synonym_list_from_word(word):
 
     return list(candidate_set)
 
+def generate_synonym_list_by_dict(word):
+    '''
+    Generate synonym candidates.
+    For each token in the doc, the list of WordNet synonyms is expanded.
+    :return candidates, a list, whose type of element is <class '__main__.SubstitutionCandidate'>
+            like SubstitutionCandidate(token_position=0, similarity_rank=10, original_token=Soft, candidate_word='subdued')
+    '''
+    if not word in syn_dict:
+        return [word]
+    else:
+        return syn_dict[word]
+    
 
 def _compile_perturbed_tokens(doc, accepted_candidates):
     '''
@@ -223,7 +276,7 @@ def PWWS(
     NE_candidates = NE_list.L[dataset][true_y]
 
     NE_tags = list(NE_candidates.keys())
-    use_NE = True  # whether use NE as a substitute
+    use_NE = False  # whether use NE as a substitute #Changed by dxs
 
     max_len = config.word_max_len[dataset]
 
@@ -239,9 +292,11 @@ def PWWS(
                 candidate = SubstitutionCandidate(position, 0, token, NE_candidates[NER_tag])
                 candidates.append(candidate)
             else:
-                candidates = _generate_synonym_candidates(token=token, token_position=position, rank_fn=rank_fn)
+                #candidates = _generate_synonym_candidates(token=token, token_position=position, rank_fn=rank_fn)
+                candidates = _generate_synonym_candidates_from_dict(token=token, token_position=position, rank_fn=rank_fn)
         else:
-            candidates = _generate_synonym_candidates(token=token, token_position=position, rank_fn=rank_fn)
+            #candidates = _generate_synonym_candidates(token=token, token_position=position, rank_fn=rank_fn)
+            candidates = _generate_synonym_candidates_from_dict(token=token, token_position=position, rank_fn=rank_fn)
 
         if len(candidates) == 0:
             continue
@@ -265,13 +320,82 @@ def PWWS(
     # replace w_i in x^(i-1) with w_i^* to craft x^(i)
     NE_count = 0  # calculate how many NE used in a doc
     change_tuple_list = []
+
+    substitute_list = [ substitute for position, token, substitute, score, tag in sorted_substitute_tuple_list]
+    substitute_count = len(substitute_list)
+    perturbed_text_list = _compile_perturbed_tokens(perturbed_doc, substitute_list)
+
+    def gen(perturbed_text_list):
+        perturbed_text = ""
+        recur = 0
+        reduc = 0
+        for i, word_str in enumerate(perturbed_text_list):
+    
+            if reduc==1 or i==0:
+                space = ""
+                reduc=0
+            else:
+                space = " "
+
+            if len(word_str)==1 and word_str[0] in [".", ",", "-", ":", "!", "?", "(", ")", ";", "<", ">", "{","}", "[","]"]:
+                space = ""
+                if word_str[0] in [ "(", "<", "{", "["]:
+                    reduc=1
+            elif len(word_str)==1 and word_str[0] in ["\"",]:
+                if recur==0:
+                    space = " "
+                    reduc=1
+                elif recur==1:
+                    space = ""
+                recur=(recur+1)%2
+            elif len(word_str)==1 and word_str[0] in ["'",]:
+                space = ""
+                reduc=1
+            
+            perturbed_text+=(space+word_str)
+
+        return perturbed_text
+
+    perturbed_text = gen(perturbed_text_list)
+    perturbed_doc = nlp(perturbed_text)
+    
+    """
     for (position, token, substitute, score, tag) in sorted_substitute_tuple_list:
         # if score <= 0:
         #     break
-        if nlp(token)[0].ent_type_ in NE_tags:
+        if nlp(token)[0].ent_type_ in NE_tags and use_NE:
             NE_count += 1
         change_tuple_list.append((position, token, substitute, score, tag))
-        perturbed_text = ' '.join(_compile_perturbed_tokens(perturbed_doc, [substitute]))
+        #perturbed_text = ' '.join(_compile_perturbed_tokens(perturbed_doc, [substitute]))
+        perturbed_text_list = _compile_perturbed_tokens(perturbed_doc, [substitute])
+        perturbed_text = "" 
+        recur = 0
+        reduc=0
+        for i, word_str in enumerate(perturbed_text_list):
+
+            if reduc==1 or i==0:
+                space = ""
+                reduc=0
+            else:
+                spece = " "
+
+            if len(word_str)==1 and word_str[0] in [".", ",", "-", ":", "!", "?", "(", ")", ";", "<", ">", "{","}", "[","]"]:
+                space = ""
+                if word_str[0] in [ "(", "<", "{", "["]:
+                    reduc=1
+            elif len(word_str)==1 and word_str[0] in ["\"",]:
+                if recur==0:
+                    space = " "
+                    reduc=1
+                elif recur==1:
+                    space = ""
+                recur=(recur+1)%2
+            elif len(word_str)==1 and word_str[0] in ["'",]:
+                space = ""
+                reduc=1
+            
+            perturbed_text+=(space+word_str)
+        
         perturbed_doc = nlp(perturbed_text)
         substitute_count += 1
         if halt_condition_fn(perturbed_text):
@@ -280,9 +404,134 @@ def PWWS(
             sub_rate = substitute_count / len(doc)
             NE_rate = NE_count / substitute_count
             return perturbed_text, sub_rate, NE_rate, change_tuple_list
-
+    """
     if verbose:
         print("use", substitute_count, "substitution; use", NE_count, 'NE')
     sub_rate = substitute_count / len(doc)
     NE_rate = NE_count / substitute_count
     return perturbed_text, sub_rate, NE_rate, change_tuple_list
+
+
+def PWWS_snli(
+        doc_p,
+        doc_h,
+        true_y,
+        dataset,
+        word_saliency_list=None,
+        rank_fn=None,
+        heuristic_fn=None,  # Defined in adversarial_tools.py
+        halt_condition_fn=None,  # Defined in adversarial_tools.py
+        verbose=True):
+
+    # defined in Eq.(8)
+    def softmax(x):
+        exp_x = np.exp(x)
+        softmax_x = exp_x / np.sum(exp_x)
+        return softmax_x
+
+    heuristic_fn = heuristic_fn or (lambda _, candidate: candidate.similarity_rank)
+    halt_condition_fn = halt_condition_fn or (lambda perturbed_text: False)
+    perturbed_doc_h = doc_h
+    perturbed_text_h = perturbed_doc_h.text
+    text_p = doc_p.text
+
+    substitute_count = 0  # calculate how many substitutions used in a doc
+    substitute_tuple_list = []  # save the information of substitute word
+
+    word_saliency_array = np.array([word_tuple[2] for word_tuple in word_saliency_list])
+    word_saliency_array = softmax(word_saliency_array)
+
+    #NE_candidates = NE_list.L[dataset][true_y]
+
+    #NE_tags = list(NE_candidates.keys())
+    use_NE = False  # whether use NE as a substitute #Changed by dxs
+
+    max_len = config.word_max_len[dataset]
+
+    # for each word w_i in x, use WordNet to build a synonym set L_i
+    for (position, token, word_saliency, tag) in word_saliency_list:
+        if position >= max_len:
+            break
+
+        candidates = []
+        """
+        if use_NE:
+            NER_tag = token.ent_type_
+            if NER_tag in NE_tags:
+                candidate = SubstitutionCandidate(position, 0, token, NE_candidates[NER_tag])
+                candidates.append(candidate)
+            else:
+                #candidates = _generate_synonym_candidates(token=token, token_position=position, rank_fn=rank_fn)
+                candidates = _generate_synonym_candidates_from_dict(token=token, token_position=position, rank_fn=rank_fn)
+        else:
+            #candidates = _generate_synonym_candidates(token=token, token_position=position, rank_fn=rank_fn)
+            candidates = _generate_synonym_candidates_from_dict(token=token, token_position=position, rank_fn=rank_fn)
+        """
+        candidates = _generate_synonym_candidates_from_dict(token=token, token_position=position, rank_fn=rank_fn)
+
+        if len(candidates) == 0:
+            continue
+        perturbed_text_h = perturbed_doc_h.text
+
+        # The substitute word selection method R(w_i;L_i) defined in Eq.(4)
+        sorted_candidates = zip(map(partial(heuristic_fn, doc_p.text, doc_h.text), candidates), candidates)
+        # Sorted according to the return value of heuristic_fn function, that is, \Delta P defined in Eq.(4)
+        sorted_candidates = list(sorted(sorted_candidates, key=lambda t: t[0]))
+
+        # delta_p_star is defined in Eq.(5); substitute is w_i^*
+        delta_p_star, substitute = sorted_candidates.pop()
+
+        # delta_p_star * word_saliency_array[position] equals H(x, x_i^*, w_i) defined in Eq.(7)
+        substitute_tuple_list.append(
+            (position, token.text, substitute, delta_p_star * word_saliency_array[position], token.tag_))
+
+    # sort all the words w_i in x in descending order based on H(x, x_i^*, w_i)
+    sorted_substitute_tuple_list = sorted(substitute_tuple_list, key=lambda t: t[3], reverse=True)
+
+    # replace w_i in x^(i-1) with w_i^* to craft x^(i)
+    NE_count = 0  # calculate how many NE used in a doc
+    change_tuple_list = []
+
+    substitute_list = [ substitute for position, token, substitute, score, tag in sorted_substitute_tuple_list]
+    substitute_count = len(substitute_list)
+    perturbed_text_list = _compile_perturbed_tokens(perturbed_doc_h, substitute_list)
+
+    def gen(perturbed_text_list):
+        perturbed_text = ""
+        recur = 0
+        reduc = 0
+        for i, word_str in enumerate(perturbed_text_list):
+    
+            if reduc==1 or i==0:
+                space = ""
+                reduc=0
+            else:
+                space = " "
+
+            if len(word_str)==1 and word_str[0] in [".", ",", "-", ":", "!", "?", "(", ")", ";", "<", ">", "{","}", "[","]"]:
+                space = ""
+                if word_str[0] in [ "(", "<", "{", "["]:
+                    reduc=1
+            elif len(word_str)==1 and word_str[0] in ["\"",]:
+                if recur==0:
+                    space = " "
+                    reduc=1
+                elif recur==1:
+                    space = ""
+                recur=(recur+1)%2
+            elif len(word_str)==1 and word_str[0] in ["'",]:
+                space = ""
+                reduc=1
+            
+            perturbed_text+=(space+word_str)
+
+        return perturbed_text
+
+    perturbed_text_h = gen(perturbed_text_list)
+    perturbed_doc_h = nlp(perturbed_text_h)
+    
+    if verbose:
+        print("use", substitute_count, "substitution; use", NE_count, 'NE')
+    sub_rate = substitute_count / len(doc_h)
+    NE_rate = 0
+    return text_p, perturbed_text_h, sub_rate, NE_rate, change_tuple_list

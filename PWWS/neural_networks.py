@@ -9,14 +9,17 @@ from .word_level_process import get_tokenizer
 import numpy as np
 
 
-def get_embedding_index(file_path):
+def get_embedding_index(file_path, embd_dim):
     global embeddings_index
     embeddings_index = {}
     f = open(file_path)
     for line in f:
         values = line.split()
-        word = values[0]
-        coefs = np.asarray(values[1:], dtype='float32')
+        word = "".join(values[:-embd_dim])
+        try:
+            coefs = np.asarray(values[-embd_dim:], dtype='float32')
+        except:
+            print(values)
         embeddings_index[word] = coefs
     f.close()
     print('Found %s word vectors.' % len(embeddings_index))

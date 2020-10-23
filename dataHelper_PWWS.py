@@ -13,11 +13,12 @@ from dataloader import Dataset
 import torch
 from torch.autograd import Variable
 
-from PWWS.read_files import split_imdb_files, split_yahoo_files, split_agnews_files
-from PWWS.word_level_process import word_process, get_tokenizer
+from PWWS.read_files import split_imdb_files, split_yahoo_files, split_agnews_files, split_snli_files
+from PWWS.word_level_process import word_process, get_tokenizer, update_tokenizer, text_process_for_single, label_process_for_single
 from PWWS.neural_networks import get_embedding_index, get_embedding_matrix
 
-from PWWS.paraphrase import generate_synonym_list_from_word
+from PWWS.paraphrase import generate_synonym_list_from_word, generate_synonym_list_by_dict
+from PWWS.config import config
 
 from torchvision.datasets.vision import VisionDataset
 
@@ -137,28 +138,34 @@ class BucketIterator_PWWS(object):
         yield self.transform(self.x[-1*self.batch_size:],self.y[-1*self.batch_size:],self.z[-1*self.batch_size:])
     
 
+
 class SynthesizedData(torch.utils.data.Dataset):
     
     def __init__(self, opt, x, y, syn_data):
         super(SynthesizedData, self).__init__()
-        self.x = x
-        self.y = y
-        self.syn_data = syn_data
+        self.x = x.copy()
+        self.y = y.copy()
+        self.syn_data = syn_data.copy()
+
+        for x in range(len(self.syn_data)):
+            self.syn_data[x] = [syn_word for syn_word in self.syn_data[x] if syn_word!=x]
+
         self.len_voc = len(self.syn_data)+1
 
     def transform(self, sent, label, anch, pos, neg, anch_valid):
        
         return torch.tensor(sent,dtype=torch.long), torch.tensor(label,dtype=torch.long),torch.tensor(anch,dtype=torch.long),torch.tensor(pos,dtype=torch.long),torch.tensor(neg,dtype=torch.long),torch.tensor(anch_valid,dtype=torch.float)
 
-    def __getitem__(self, index, max_num_anch_per_sent=50, num_pos_per_anch=20, num_neg_per_anch=100):
+    def __getitem__(self, index, max_num_anch_per_sent=100, num_pos_per_anch=20, num_neg_per_anch=100):
         sent = self.x[index]
         label = self.y[index].argmax()
 
-        for x in sent:
-            self.syn_data[x] = [syn_word for syn_word in self.syn_data[x] if syn_word!=x]
-
-        sent_for_anch = [x for x in sent if x!=0 and len(self.syn_data[x]) != 0]
-
+        #for x in sent:
+        #    self.syn_data[x] = [syn_word for syn_word in self.syn_data[x] if syn_word!=x]
+        #try:
+        sent_for_anch = [x for x in sent if x>0 and x<len(self.syn_data) and len(self.syn_data[x]) != 0]
+        #except:
+        #    print(index)
         #while(len(sent_for_anch) < max_num_anch_per_sent):
         #    sent_for_anch.extend(sent_for_anch)
         
@@ -206,6 +213,223 @@ class SynthesizedData(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.x)
 
+
+class SynthesizedData_TextLikeSyn(SynthesizedData):
+    
+    def __init__(self, opt, x, y, syn_data):
+        super(SynthesizedData_TextLikeSyn, self).__init__(opt, x, y, syn_data)
+
+    def transform(self, sent, label, anch, pos, neg, anch_valid, text_like_syn, text_like_syn_valid):
+       
+        return torch.tensor(sent,dtype=torch.long), torch.tensor(label,dtype=torch.long), torch.tensor(anch,dtype=torch.long),torch.tensor(pos,dtype=torch.long),torch.tensor(neg,dtype=torch.long), torch.tensor(anch_valid,dtype=torch.float), torch.tensor(text_like_syn,dtype=torch.long), torch.tensor(text_like_syn_valid,dtype=torch.float),
+
+    def __getitem__(self, index, max_num_anch_per_sent=100, num_pos_per_anch=20, num_neg_per_anch=100, num_text_like_syn=20):
+        sent = self.x[index]
+        label = self.y[index].argmax()
+
+        text_like_syn=[]
+        text_like_syn_valid=[]
+        for x in sent:
+            text_like_syn_valid.append([])
+            if x<len(self.syn_data):
+                text_like_syn.append( self.syn_data[x].copy() )
+            else:
+                text_like_syn.append([])
+
+        for i, x in enumerate(sent):
+            temp = text_like_syn[i]
+            len_temp=len(temp)
+            if len_temp==0:
+                text_like_syn_valid[i] = [1]
+                text_like_syn_valid[i].extend([0 for times in range(num_text_like_syn-1)])
+                text_like_syn[i] = [x]
+                text_like_syn[i].extend([0 for times in range(num_text_like_syn-1)])
+            elif len_temp>=num_text_like_syn-1:
+                temp = random.sample(temp, num_text_like_syn-1)
+                temp.append(x)
+                text_like_syn[i]=temp
+                text_like_syn_valid[i] = [1 for times in range(num_text_like_syn)]
+                assert(len(text_like_syn[i])==num_text_like_syn)
+            else:
+                temp.append(x)
+                text_like_syn_valid[i] = [1 for times in range(len(temp))]
+                while(len(temp)<num_text_like_syn):
+                    temp.append(0)
+                    text_like_syn_valid[i].append(0)
+                text_like_syn[i]=temp
+                assert(len(text_like_syn[i])==num_text_like_syn)
+
+        #for x in sent:
+        #    self.syn_data[x] = [syn_word for syn_word in self.syn_data[x] if syn_word!=x]
+        #try:
+        sent_for_anch = [x for x in sent if x>0 and x<len(self.syn_data) and len(self.syn_data[x]) != 0]
+        #except:
+        #    print(index)
+        #while(len(sent_for_anch) < max_num_anch_per_sent):
+        #    sent_for_anch.extend(sent_for_anch)
+        
+        if len(sent_for_anch) > max_num_anch_per_sent:
+            anch = random.sample(sent_for_anch, max_num_anch_per_sent)
+        else:
+            anch = sent_for_anch
+
+        anch_valid = [1 for x in anch]
+
+        pos = []
+        neg = []
+        for word in anch:
+            syn_set = set(self.syn_data[word].copy())
+            if len(self.syn_data[word]) == 0:
+                pos.append([word for i in range(num_pos_per_anch)])
+            elif len(self.syn_data[word]) < num_pos_per_anch:
+                    temp = []
+                    for i in range( int(num_pos_per_anch/len(self.syn_data[word])) + 1):
+                        temp.extend(self.syn_data[word].copy())
+                    #pos.append(temp[:num_pos_per_anch])
+                    pos.append(random.sample(temp, num_pos_per_anch))
+            elif len(self.syn_data[word]) >= num_pos_per_anch:
+                pos.append(random.sample(self.syn_data[word].copy(), num_pos_per_anch))
+
+            count=0
+            temp = []
+            while (count<num_neg_per_anch):
+                while (1):
+                    neg_word = random.randint(0, self.len_voc)
+                    if neg_word not in syn_set:
+                        break
+                temp.append(neg_word)
+                count+=1
+            neg.append(temp)
+
+        while(len(anch)<max_num_anch_per_sent):
+            anch.append(0)
+            anch_valid.append(0)
+            pos.append([0 for i in range(num_pos_per_anch)])
+            neg.append([0 for i in range(num_neg_per_anch)])
+
+        return self.transform(sent, label, anch, pos, neg, anch_valid, text_like_syn, text_like_syn_valid)
+
+
+class Snli_SynthesizedData_TextLikeSyn(torch.utils.data.Dataset):
+    
+    def __init__(self, opt, x_p, x_h, y, syn_data):
+        super(Snli_SynthesizedData_TextLikeSyn, self).__init__()
+        self.x_p = x_p.copy()
+        self.x_h = x_h.copy()
+        self.y = y.copy()
+        self.syn_data = syn_data.copy()
+
+        max_syn_num = 0
+
+        for x in range(len(self.syn_data)):
+            self.syn_data[x] = [syn_word for syn_word in self.syn_data[x] if syn_word!=x]
+            max_syn_num =max(max_syn_num, len(self.syn_data[x])+1 )
+
+        print("max syn num:", max_syn_num)
+        self.max_syn_num = None
+        #self.max_syn_num = max_syn_num
+
+        #self.len_voc = len(self.syn_data)+1
+
+    def transform(self, x_p, x_h, label, x_p_text_like_syn, x_p_text_like_syn_valid, x_h_text_like_syn, x_h_text_like_syn_valid, sent_p_mask, sent_h_mask):
+       
+        return torch.tensor(x_p,dtype=torch.long), torch.tensor(x_h,dtype=torch.long), torch.tensor(label,dtype=torch.long),torch.tensor(x_p_text_like_syn,dtype=torch.long), torch.tensor(x_p_text_like_syn_valid,dtype=torch.float),torch.tensor(x_h_text_like_syn,dtype=torch.long), torch.tensor(x_h_text_like_syn_valid,dtype=torch.float), torch.tensor(sent_p_mask,dtype=torch.float), torch.tensor(sent_h_mask,dtype=torch.float)
+
+    def __getitem__(self, index, num_text_like_syn=10):
+
+        if self.max_syn_num is not None:
+            num_text_like_syn = self.max_syn_num
+
+        sent_p = self.x_p[index]
+        sent_h = self.x_h[index]
+        label = self.y[index].argmax()
+
+        sent_p_mask = []
+        sent_h_mask = []
+
+        x_p_text_like_syn = []
+        x_h_text_like_syn = []
+        x_p_text_like_syn_valid = []
+        x_h_text_like_syn_valid = []
+
+        for x in sent_p:
+            if x==0:
+                sent_p_mask.append(0)
+            else:
+                sent_p_mask.append(1)
+
+            x_p_text_like_syn_valid.append([])
+            if x<len(self.syn_data):
+                x_p_text_like_syn.append( self.syn_data[x].copy() )
+            else:
+                x_p_text_like_syn.append([])
+
+        for x in sent_h:
+            if x==0:
+                sent_h_mask.append(0)
+            else:
+                sent_h_mask.append(1)
+
+            x_h_text_like_syn_valid.append([])
+            if x<len(self.syn_data):
+                x_h_text_like_syn.append( self.syn_data[x].copy() )
+            else:
+                x_h_text_like_syn.append([])
+
+        for i, x in enumerate(sent_p):
+            temp = x_p_text_like_syn[i]
+            len_temp=len(temp)
+            if len_temp==0:
+                x_p_text_like_syn_valid[i] = [1]
+                x_p_text_like_syn_valid[i].extend([0 for times in range(num_text_like_syn-1)])
+                x_p_text_like_syn[i] = [x]
+                x_p_text_like_syn[i].extend([0 for times in range(num_text_like_syn-1)])
+            elif len_temp>=num_text_like_syn-1:
+                temp = random.sample(temp, num_text_like_syn-1)
+                temp.append(x)
+                x_p_text_like_syn[i]=temp
+                x_p_text_like_syn_valid[i] = [1 for times in range(num_text_like_syn)]
+                assert(len(x_p_text_like_syn[i])==num_text_like_syn)
+            else:
+                temp.append(x)
+                x_p_text_like_syn_valid[i] = [1 for times in range(len(temp))]
+                while(len(temp)<num_text_like_syn):
+                    temp.append(0)
+                    x_p_text_like_syn_valid[i].append(0)
+                x_p_text_like_syn[i]=temp
+                assert(len(x_p_text_like_syn[i])==num_text_like_syn)
+
+            #if x_p_text_like_syn_valid[i] == [1 for times in range(num_text_like_syn)]:
+            #    print(x_p_text_like_syn[i])
+            #    print(x_p_text_like_syn_valid[i])
+
+        for i, x in enumerate(sent_h):
+            temp = x_h_text_like_syn[i]
+            len_temp=len(temp)
+            if len_temp==0:
+                x_h_text_like_syn_valid[i] = [1]
+                x_h_text_like_syn_valid[i].extend([0 for times in range(num_text_like_syn-1)])
+                x_h_text_like_syn[i] = [x]
+                x_h_text_like_syn[i].extend([0 for times in range(num_text_like_syn-1)])
+            elif len_temp>=num_text_like_syn-1:
+                temp = random.sample(temp, num_text_like_syn-1)
+                temp.append(x)
+                x_h_text_like_syn[i]=temp
+                x_h_text_like_syn_valid[i] = [1 for times in range(num_text_like_syn)]
+                assert(len(x_h_text_like_syn[i])==num_text_like_syn)
+            else:
+                temp.append(x)
+                x_h_text_like_syn_valid[i] = [1 for times in range(len(temp))]
+                while(len(temp)<num_text_like_syn):
+                    temp.append(0)
+                    x_h_text_like_syn_valid[i].append(0)
+                x_h_text_like_syn[i]=temp
+                assert(len(x_h_text_like_syn[i])==num_text_like_syn)
+
+        return self.transform(sent_p, sent_h, label, x_p_text_like_syn, x_p_text_like_syn_valid, x_h_text_like_syn, x_h_text_like_syn_valid, sent_p_mask, sent_h_mask)
+
+    def __len__(self):
+        return len(self.x_p)
 
 class SynonymData(torch.utils.data.Dataset):
 
@@ -477,100 +701,288 @@ def process_with_bert_selfmade(text,tokenizer,max_seq_len) :
 
     return tokens[:min(len(tokens),max_seq_len)] + [0] *int(max_seq_len-len(tokens))
 
-
-def make_synthesized_iter(opt):
+def snli_make_synthesized_iter(opt):
     dataset=opt.dataset
-    if opt.data_from_file:
-        filename= opt.data_file_path
-        f=open(filename,'rb')
-        saved=pickle.load(f)
-        f.close()
-        x_train=saved['x_train']
-        x_test=saved['x_test']
-        y_train=saved['y_train']
-        y_test=saved['y_test']
-        train_texts=saved['train_texts']
-        test_texts=saved['test_texts']
-        opt.embeddings=saved['embeddings']
-        opt.vocab_size=saved['vocab_size']
-        opt.label_size = saved['label_size']  
-    else:
-        embedding_dim=opt.embedding_dim
-
-        if dataset == 'imdb':
-            opt.label_size = 2
-            train_texts, train_labels, test_texts, test_labels = split_imdb_files()
-            x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
-        elif dataset == 'agnews':
-            train_texts, train_labels, test_texts, test_labels = split_agnews_files()
-            x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
-        elif dataset == 'yahoo':
-            train_texts, train_labels, test_texts, test_labels = split_yahoo_files()
-            x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
-
-        file_path = r'.vector_cache/glove.6B.{}d.txt'.format(str(embedding_dim))
-        get_embedding_index(file_path)
-        from PWWS.config import config
-        num_words = config.num_words[dataset]
-        opt.vocab_size= num_words
-        embedding_matrix = get_embedding_matrix(dataset, num_words, embedding_dim)
-        
-        opt.embeddings = torch.FloatTensor(embedding_matrix)
-        filename= opt.data_file_path
-        f=open(filename,'wb')
-        saved={}
-        saved['x_train']=x_train
-        saved['x_test']=x_test
-        saved['y_train']=y_train
-        saved['y_test']=y_test
-        saved['train_texts']=train_texts
-        saved['test_texts']=test_texts
-        saved['embeddings']=opt.embeddings
-        saved['vocab_size']=opt.vocab_size
-        saved['label_size']=opt.label_size 
-        pickle.dump(saved,f)
-        f.close()
-
+    if dataset == 'snli':
+        opt.label_size = 3
+        train_perms, train_hypos, train_labels, dev_perms, dev_hypos, dev_labels, test_perms, test_hypos, test_labels = split_snli_files()
+      
     if opt.synonyms_from_file:
-        filename= opt.synonyms_file_path
+        filename= opt.snli_synonyms_file_path
         f=open(filename,'rb')
         saved=pickle.load(f)
         f.close()
         syn_data = saved["syn_data"]
+        opt.embeddings=saved['embeddings']
+        opt.vocab_size=saved['vocab_size']
+        x_p_train=saved['x_p_train']
+        x_h_train=saved['x_h_train']
+        y_train=saved['y_train']
+        x_p_test=saved['x_p_test']
+        x_h_test=saved['x_h_test']
+        y_test=saved['y_test']
+        x_p_dev=saved['x_p_dev']
+        x_h_dev=saved['x_h_dev']
+        y_dev=saved['y_dev']
+
+        tokenizer = get_tokenizer(opt.dataset)
+        dictori=tokenizer.index_word
+
+        tokenizer_file = "temp/snli_tokenizer_with_ceritified_syndata.pickle"
+        f=open(tokenizer_file,'rb')
+        tokenizer=pickle.load(f)
+        f.close()
+        update_tokenizer(dataset, tokenizer)
+        dictnew=tokenizer.index_word
+
+        print("Check the tokenizer.")
+        for key in dictori:
+            #try:
+            assert(dictori[key]==dictnew[key])
+            #except:
+            #    print(key)
+
     else:
         tokenizer = get_tokenizer(opt.dataset)
+        print("len of tokenizer before updata.", len(tokenizer.index_word))
         print("Preparing synonyms.")
+
+        syn_texts_for_tokenizer = []
+        syn_dict = {}
 
         syn_data = [[] for i in range(1+len(tokenizer.index_word))]
         for index in tokenizer.index_word:
             if index % 100 == 0:
                 print(index)
             word = tokenizer.index_word[index]
-            synonym_list_ori = generate_synonym_list_from_word(word)
-            synonym_list = []
+            #syn_text = " ".join(generate_synonym_list_from_word(word))
+            syn_text = " ".join(generate_synonym_list_by_dict(word))
+            syn_texts_for_tokenizer.append(syn_text)
+            syn_dict[index]=syn_text
 
-            if len(synonym_list_ori) != 0:
-                for synonym in synonym_list_ori:
-                    temp = tokenizer.texts_to_sequences([synonym])
-                    if temp!= [[]]:
-                        synonym_list.append(temp[0][0])
+        # update tokenizer
+        print("Fit on syn texts.")
+        dictori=tokenizer.index_word
+        tokenizer.fit_on_texts(syn_texts_for_tokenizer, freq_count=0) # to keep the original index order of the tokenizer
+        dictnew=tokenizer.index_word
+        print("Check the tokenizer.")
+        for key in dictori:
+            assert(dictori[key]==dictnew[key])
 
-            syn_data[index] = synonym_list
+        update_tokenizer(dataset, tokenizer)
+        tokenizer_file = "temp/snli_tokenizer_with_ceritified_syndata.pickle"
+        f=open(tokenizer_file,'wb')
+        pickle.dump(tokenizer, f)
+        f.close()
+
+        print("len of tokenizer after updata.", len(tokenizer.index_word))
+        assert(len(tokenizer.index_word)<config.num_words[dataset])
+
+        # Tokenize syn data
+        print("Tokenize syn data.")
+        for key in syn_dict:
+            temp = tokenizer.texts_to_sequences([syn_dict[key]])
+            syn_data[key] = temp[0]
+
+        # make embd according to the updated tokenizer
+        embedding_dim=opt.embedding_dim
+        pretrained = opt.embedding_file
+        #pretrained = r'.vector_cache/glove.6B.{}d.txt'.format(str(embedding_dim))
+        get_embedding_index(pretrained, embedding_dim)
+        num_words = config.num_words[dataset]
+        opt.vocab_size= num_words
+        embedding_matrix = get_embedding_matrix(dataset, num_words, embedding_dim)
+        opt.embeddings = torch.FloatTensor(embedding_matrix)
+
+        # Tokenize the training data
+        print("Tokenize training data.")
+        x_p_train = text_process_for_single(train_perms, opt.dataset)
+        x_h_train = text_process_for_single(train_hypos, opt.dataset)
+        y_train = label_process_for_single(train_labels, opt.dataset)
+
+        x_p_dev = text_process_for_single(dev_perms, opt.dataset)
+        x_h_dev = text_process_for_single(dev_hypos, opt.dataset)
+        y_dev = label_process_for_single(dev_labels, opt.dataset)
+
+        x_p_test = text_process_for_single(test_perms, opt.dataset)
+        x_h_test = text_process_for_single(test_hypos, opt.dataset)
+        y_test = label_process_for_single(test_labels, opt.dataset)
+ 
+        filename= opt.snli_synonyms_file_path
+        f=open(filename,'wb')
+        saved={}
+        saved['syn_data']=syn_data
+        saved['embeddings']=opt.embeddings
+        saved['vocab_size']=opt.vocab_size
+        saved['x_p_train']=x_p_train
+        saved['x_h_train']=x_h_train
+        saved['y_train']=y_train
+        saved['x_p_dev']=x_p_dev
+        saved['x_h_dev']=x_h_dev
+        saved['y_dev']=y_dev
+        saved['x_p_test']=x_p_test
+        saved['x_h_test']=x_h_test
+        saved['y_test']=y_test
+        pickle.dump(saved,f)
+        f.close()
+
+    vocab_freq = torch.zeros(opt.embeddings.shape[0]).to(opt.embeddings.dtype)
+    for index in tokenizer.index_word:
+        word = tokenizer.index_word[index]
+        freq = tokenizer.word_counts[word]
+        vocab_freq[index] = freq
+    opt.vocab_freq = vocab_freq
+
+    train_data = Snli_SynthesizedData_TextLikeSyn(opt, x_p_train, x_h_train, y_train, syn_data)
+    train_data.__getitem__(0)
+    train_loader = torch.utils.data.DataLoader(train_data, opt.batch_size, shuffle=True, num_workers=8)
+
+    dev_data = Snli_SynthesizedData_TextLikeSyn(opt, x_p_dev, x_h_dev, y_dev, syn_data)
+    dev_loader = torch.utils.data.DataLoader(dev_data, opt.test_batch_size, shuffle=False, num_workers=8)
+
+    test_data = Snli_SynthesizedData_TextLikeSyn(opt, x_p_test, x_h_test, y_test, syn_data)
+    test_loader = torch.utils.data.DataLoader(test_data, opt.test_batch_size, shuffle=False, num_workers=8)
+
+    return train_loader, dev_loader, test_loader, syn_data
+
+
+def make_synthesized_iter(opt):
+    dataset=opt.dataset
+    if dataset == 'imdb':
+        opt.label_size = 2
+        train_texts, train_labels, dev_texts, dev_labels, test_texts, test_labels = split_imdb_files()
+    elif dataset == 'snli':
+        opt.label_size = 2
+        train_perms, train_hypos, train_labels, dev_perms, dev_hypos, dev_labels, test_perms, test_hypos, test_labels = split_snli_files()
+    elif dataset == 'agnews':
+        # opt.label_size = ?
+        train_texts, train_labels, test_texts, test_labels = split_agnews_files()
+    elif dataset == 'yahoo':
+        # opt.label_size = ?
+        train_texts, train_labels, test_texts, test_labels = split_yahoo_files()
+            
+    if opt.synonyms_from_file:
+        filename= opt.synonyms_file_path
+        f=open(filename,'rb')
+        saved=pickle.load(f)
+        f.close()
+        syn_data = saved["syn_data"]
+        opt.embeddings=saved['embeddings']
+        opt.vocab_size=saved['vocab_size']
+        x_train=saved['x_train']
+        x_test=saved['x_test']
+        x_dev=saved['x_dev']
+        y_train=saved['y_train']
+        y_test=saved['y_test']
+        y_dev=saved['y_dev']
+
+        tokenizer = get_tokenizer(opt.dataset)
+        dictori=tokenizer.index_word
+
+        tokenizer_file = "temp/imdb_tokenizer_with_ceritified_syndata.pickle"
+        f=open(tokenizer_file,'rb')
+        tokenizer=pickle.load(f)
+        f.close()
+        update_tokenizer(dataset, tokenizer)
+        dictnew=tokenizer.index_word
+
+        print("Check the tokenizer.")
+        for key in dictori:
+            assert(dictori[key]==dictnew[key])
+
+    else:
+        tokenizer = get_tokenizer(opt.dataset)
+        print("len of tokenizer before updata.", len(tokenizer.index_word))
+        print("Preparing synonyms.")
+
+        syn_texts_for_tokenizer = []
+        syn_dict = {}
+
+        syn_data = [[] for i in range(1+len(tokenizer.index_word))]
+        for index in tokenizer.index_word:
+            if index % 100 == 0:
+                print(index)
+            word = tokenizer.index_word[index]
+            #syn_text = " ".join(generate_synonym_list_from_word(word))
+            syn_text = " ".join(generate_synonym_list_by_dict(word))
+            syn_texts_for_tokenizer.append(syn_text)
+            syn_dict[index]=syn_text
+
+        # update tokenizer
+        print("Fit on syn texts.")
+        tokenizer.fit_on_texts(syn_texts_for_tokenizer, freq_count=0) # to keep the original index order of the tokenizer
+        update_tokenizer(dataset, tokenizer)
+        tokenizer_file = "temp/imdb_tokenizer_with_ceritified_syndata.pickle"
+        f=open(tokenizer_file,'wb')
+        pickle.dump(tokenizer, f)
+        f.close()
+
+        print("len of tokenizer after updata.", len(tokenizer.index_word))
+        assert(len(tokenizer.index_word)<config.num_words[dataset])
+
+        # Tokenize syn data
+        print("Tokenize syn data.")
+        for key in syn_dict:
+            temp = tokenizer.texts_to_sequences([syn_dict[key]])
+            syn_data[key] = temp[0]
+
+        # make embd according to the updated tokenizer
+        embedding_dim=opt.embedding_dim
+        pretrained = opt.embedding_file
+        #pretrained = r'.vector_cache/glove.6B.{}d.txt'.format(str(embedding_dim))
+        get_embedding_index(pretrained, embedding_dim)
+        num_words = config.num_words[dataset]
+        opt.vocab_size= num_words
+        embedding_matrix = get_embedding_matrix(dataset, num_words, embedding_dim)
+        opt.embeddings = torch.FloatTensor(embedding_matrix)
+
+        # Tokenize the training data
+        print("Tokenize training data.")
+        #x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
+        
+        x_train = text_process_for_single(train_texts, opt.dataset)
+        y_train = label_process_for_single(train_labels, opt.dataset)
+
+        x_dev = text_process_for_single(dev_texts, opt.dataset)
+        y_dev = label_process_for_single(dev_labels, opt.dataset)
+
+        x_test = text_process_for_single(test_texts, opt.dataset)
+        y_test = label_process_for_single(test_labels, opt.dataset)
+ 
 
         filename= opt.synonyms_file_path
         f=open(filename,'wb')
         saved={}
         saved['syn_data']=syn_data
+        saved['embeddings']=opt.embeddings
+        saved['vocab_size']=opt.vocab_size
+        saved['x_train']=x_train
+        saved['x_test']=x_test
+        saved['x_dev']=x_dev
+        saved['y_train']=y_train
+        saved['y_test']=y_test
+        saved['y_dev']=y_dev
         pickle.dump(saved,f)
         f.close()
 
-    train_data = SynthesizedData(opt, x_train, y_train, syn_data)
+    vocab_freq = torch.zeros(opt.embeddings.shape[0]).to(opt.embeddings.dtype)
+    for index in tokenizer.index_word:
+        word = tokenizer.index_word[index]
+        freq = tokenizer.word_counts[word]
+        vocab_freq[index] = freq
+    opt.vocab_freq = vocab_freq
+
+    train_data = SynthesizedData_TextLikeSyn(opt, x_train, y_train, syn_data)
     train_data.__getitem__(0)
     train_loader = torch.utils.data.DataLoader(train_data, opt.batch_size, shuffle=True, num_workers=8)
 
-    test_data = SynthesizedData(opt, x_test, y_test, syn_data)
-    test_loader = torch.utils.data.DataLoader(test_data, opt.batch_size, shuffle=False, num_workers=8)
-    return train_loader, test_loader
+    # use training data as dev
+    dev_data = SynthesizedData_TextLikeSyn(opt, x_dev, y_dev, syn_data)
+    dev_loader = torch.utils.data.DataLoader(dev_data, opt.test_batch_size, shuffle=False, num_workers=8)
+
+    test_data = SynthesizedData_TextLikeSyn(opt, x_test, y_test, syn_data)
+    test_loader = torch.utils.data.DataLoader(test_data, opt.test_batch_size, shuffle=False, num_workers=8)
+    return train_loader, dev_loader, test_loader, syn_data
     
 
 

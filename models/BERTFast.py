@@ -4,17 +4,19 @@ import numpy as np
 from torch import nn
 from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
 from models.BaseModel import BaseModel
-class BERTFast(BaseModel): 
+class BERTFast(nn.Module): 
     def __init__(self, opt ):
-        super(BERTFast, self).__init__(opt)
+        super(BERTFast, self).__init__()
+
+        self.opt = opt
 
         self.bert_model = BertModel.from_pretrained('bert-base-uncased')  
         for param in self.bert_model.parameters():
             param.requires_grad=self.opt.bert_trained
         self.hidden2label = nn.Linear(768, opt.label_size)
-        self.properties.update(
-                {"bert_trained":self.opt.bert_trained
-                })
+        #self.properties.update(
+        #        {"bert_trained":self.opt.bert_trained
+        #        })
 
 
     def forward(self,  content):

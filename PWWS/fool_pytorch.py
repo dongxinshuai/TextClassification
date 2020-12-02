@@ -27,15 +27,20 @@ def write_origin_input_texts(origin_input_texts_path, test_texts, test_samples_c
         for i in range(test_samples_cap):
             f.write(test_texts[i] + '\n')
 
-def genetic_attack(opt, device, model, attack_surface, dataset='imdb', genetic_test_num=100):
+def genetic_attack(opt, device, model, attack_surface, dataset='imdb', genetic_test_num=100, test_bert=False):
 
-    # get tokenizer
-    tokenizer = get_tokenizer(dataset)
+    if test_bert:
+        from modified_bert_tokenizer import ModifiedBertTokenizer
+        tokenizer = ModifiedBertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
+    else:
+        # get tokenizer
+        tokenizer = get_tokenizer(dataset)
 
     # Read data set
     x_test = y_test = None
     test_texts = None
 
+    """
     if opt.synonyms_from_file:
 
         if dataset == 'imdb':
@@ -69,12 +74,25 @@ def genetic_attack(opt, device, model, attack_surface, dataset='imdb', genetic_t
         elif dataset == 'yahoo':
             train_texts, train_labels, test_texts, test_labels = split_yahoo_files()
             x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
+    """
+
+    if dataset == 'imdb':
+        train_texts, train_labels, dev_texts, dev_labels, test_texts, test_labels = split_imdb_files()
+        #x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
+
+    elif dataset == 'agnews':
+        train_texts, train_labels, test_texts, test_labels = split_agnews_files()
+        #x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
+
+    elif dataset == 'yahoo':
+        train_texts, train_labels, test_texts, test_labels = split_yahoo_files()
+        #x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
 
     from .attacks import GeneticAdversary, AdversarialModel
     adversary = GeneticAdversary(attack_surface, num_iters=opt.genetic_iters, pop_size=opt.genetic_pop_size)
 
     from .config import config
-    wrapped_model = AdversarialModel(model, tokenizer, config.word_max_len[dataset])
+    wrapped_model = AdversarialModel(model, tokenizer, config.word_max_len[dataset], test_bert=test_bert)
 
     adv_acc = adversary.run(wrapped_model, test_texts, test_labels, device, genetic_test_num, opt)
     print("genetic attack results:", adv_acc)

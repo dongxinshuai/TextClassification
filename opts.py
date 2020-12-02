@@ -249,12 +249,20 @@ def parse_opt():
 
     parser.add_argument('--synonyms_file_path', type=str, default="temp/imdb.synonyms.new",
                     help='')
+
+    parser.add_argument('--bert_synonyms_file_path', type=str, default="temp/imdb.bert.synonyms.new",
+                    help='')
+
+
     parser.add_argument('--snli_synonyms_file_path', type=str, default="temp/snli.synonyms.new",
                     help='')
 
     parser.add_argument('--synonyms_from_file', type=str, default='true',
                     help='')
 
+    parser.add_argument('--bert_synonyms_from_file', type=str, default='true',
+                    help='')
+                    
     parser.add_argument('--bow_mean', type=str, default='false', help='')
 
     parser.add_argument('--data_file_path', type=str, default="temp/imdb_cnn_adv_all",
@@ -284,7 +292,7 @@ def parse_opt():
     parser.add_argument('--batch_size', type=int, default=64,
                     help='batch_size') 
 
-    parser.add_argument('--test_batch_size', type=int, default=64,
+    parser.add_argument('--test_batch_size', type=int, default=32,
                     help='test_batch_size') 
 
     parser.add_argument('--syn_batch_size', type=int, default=2048,
@@ -355,7 +363,7 @@ def parse_opt():
     
     parser.add_argument('--bert_dir', type=str, default="D:/dataset/bert/uncased_L-12_H-768_A-12",
                     help='bert dir')
-    parser.add_argument('--bert_trained', type=str, default="false",
+    parser.add_argument('--bert_trained', type=str, default="true",
                     help='fine tune the bert or not')
     
     parser.add_argument('--from_torchtext', type=str, default="false",

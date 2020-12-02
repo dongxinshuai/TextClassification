@@ -64,7 +64,7 @@ def train(opt,train_iter, dev_iter, test_iter, syn_data, verbose=True):
     if opt.lm_constraint:
         attack_surface = LMConstrainedAttackSurface.from_files(opt.certified_neighbors_file, opt.imdb_lm_file)
     else:
-        attack_surface = WordSubstitutionAttackSurface.from_file(opt.certified_neighbors_file)
+        attack_surface = WordSubstitutionAttackSurface.from_files(opt.certified_neighbors_file, opt.imdb_lm_file)
     
 
     if opt.resume != None:

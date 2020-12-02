@@ -13,13 +13,27 @@ class AttackSurface(object):
     raise NotImplementedError
 
 class WordSubstitutionAttackSurface(AttackSurface):
-  def __init__(self, neighbors):
+  def __init__(self, neighbors, lm_scores):
     self.neighbors = neighbors
+    self.lm_scores = lm_scores
 
   @classmethod
-  def from_file(cls, neighbors_file):
+  def from_files(cls, neighbors_file, lm_file):
     with open(neighbors_file) as f:
-      return cls(json.load(f))
+      neighbors = json.load(f)
+    with open(lm_file) as f:
+      lm_scores = {}
+      cur_sent = None
+      for line in f:
+        toks = line.strip().split('\t')
+        if len(toks) == 2:
+          cur_sent = toks[1].lower()
+          lm_scores[cur_sent] = collections.defaultdict(dict)
+        else:
+          word_idx, word, score = int(toks[1]), toks[2], float(toks[3])
+          lm_scores[cur_sent][word_idx][word] = score
+    return cls(neighbors, lm_scores)
+
 
   def get_swaps(self, words):
     swaps = []
@@ -32,7 +46,9 @@ class WordSubstitutionAttackSurface(AttackSurface):
     return swaps
 
   def check_in(self, words):
-    return True
+    words = [word.lower() for word in words]
+    s = ' '.join(words)
+    return s in self.lm_scores
 
 class LMConstrainedAttackSurface(AttackSurface):
   """WordSubstitutionAttackSurface with language model constraint."""

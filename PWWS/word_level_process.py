@@ -101,6 +101,23 @@ def text_process_for_single(texts, dataset):
     seq = sequence.pad_sequences(seq, maxlen=maxlen, padding='post', truncating='post')
     return seq
 
+def text_process_for_single_bert(tokenizer,texts, dataset):
+    maxlen = config.word_max_len[dataset]
+
+    res=[]
+
+    for text in texts:
+        encoded = tokenizer.encode_plus(
+                text, 
+                None,
+                add_special_tokens = True,
+                max_length = maxlen,
+                pad_to_max_length = True,
+            )
+        res.append(encoded)
+
+    return res
+
 def label_process_for_single(labels, dataset):
     maxlen = config.word_max_len[dataset]
     tokenizer = get_tokenizer(dataset)

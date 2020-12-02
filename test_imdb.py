@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.modules.loss import NLLLoss,MultiLabelSoftMarginLoss,MultiLabelMarginLoss,BCELoss
 
-from dataHelper_PWWS import load_synonyms_in_vocab, make_synthesized_iter
+from dataHelper_PWWS import load_synonyms_in_vocab, make_synthesized_iter, save_word_vectors_for_show
 from PWWS.fool_pytorch import fool_text_classifier_pytorch, genetic_attack
 
 import opts
@@ -65,13 +65,13 @@ def test(opt,train_iter, test_iter, verbose=True):
 
     from PWWS.word_level_process import word_process, get_tokenizer
     tokenizer = get_tokenizer(opt.dataset)
-    adv_acc=utils.evaluation_adv(opt, device, model, test_iter, tokenizer)
+    #adv_acc=utils.evaluation_adv(opt, device, model, test_iter, tokenizer)
 
     from from_certified.attack_surface import WordSubstitutionAttackSurface, LMConstrainedAttackSurface
     if opt.lm_constraint:
         attack_surface = LMConstrainedAttackSurface.from_files(opt.certified_neighbors_file, opt.imdb_lm_file)
     else:
-        attack_surface = WordSubstitutionAttackSurface.from_file(opt.certified_neighbors_file)
+        attack_surface = WordSubstitutionAttackSurface.from_files(opt.certified_neighbors_file, opt.imdb_lm_file)
     
     genetic_attack(opt, device, model, attack_surface, dataset=opt.dataset, genetic_test_num=opt.genetic_test_num)
 
@@ -92,6 +92,8 @@ def main():
     print(opt)
     if "CUDA_VISIBLE_DEVICES" not in os.environ.keys():
         os.environ["CUDA_VISIBLE_DEVICES"] =opt.gpu
+
+    save_word_vectors_for_show(opt)
 
     syn_train_iter, syn_dev_iter, syn_test_iter, syn_data = make_synthesized_iter(opt)
     test(opt,syn_train_iter, syn_test_iter)

@@ -143,6 +143,9 @@ import json
 with open("counterfitted_neighbors.json") as f:
     syn_dict = json.load(f)
 
+def get_syn_dict():
+    return syn_dict
+
 
 def _generate_synonym_candidates_from_dict(token, token_position, rank_fn=None):
     '''

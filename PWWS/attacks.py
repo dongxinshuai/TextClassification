@@ -56,19 +56,49 @@ class AdversarialModel_Snli(object):
         #return p.squeeze()
 
 class AdversarialModel(object):
-    def __init__(self, model, tokenizer, maxlen):
+    def __init__(self, model, tokenizer, maxlen, test_bert=False):
         super(AdversarialModel, self).__init__()
         model.eval()
         self.model = model
         self.tokenizer = tokenizer
         self.maxlen = maxlen
+        self.test_bert = test_bert
+
+    def tokenize(self, x):
+        if self.test_bert:
+            #print(len(x.split()))
+            #print(x)
+            token = self.tokenizer.encode_plus(x, None, add_special_tokens=True, max_length=self.maxlen, pad_to_max_length=True)
+
+            return token
+        else:
+            token = self.tokenizer.texts_to_sequences([x])
+            token = sequence.pad_sequences(token, maxlen=self.maxlen, padding='post', truncating='post')
+            return token
+
     def query(self, x, device):
-        input_vector = self.tokenizer.texts_to_sequences([x])
-        input_vector = sequence.pad_sequences(input_vector, maxlen=self.maxlen, padding='post', truncating='post')
-        #input_vector = np.zeros((1, self.maxlen))
-        #input_vector = x
-        input_vector=torch.from_numpy(input_vector).to(device).to(torch.long)
-        logit = self.model(mode="text_to_logit",input=input_vector).squeeze(0)
+
+        #input_vector = self.tokenizer.texts_to_sequences([x])
+        #input_vector = sequence.pad_sequences(input_vector, maxlen=self.maxlen, padding='post', truncating='post')
+
+        if self.test_bert:
+            token = self.tokenize(x)
+
+            text = np.array([token['input_ids']])
+            text = torch.tensor(text,dtype=torch.long).to(device)
+            mask = np.array([token['attention_mask']])
+            #print(mask.sum())
+            mask = torch.tensor(mask,dtype=torch.long).to(device)
+            token_type_ids = np.array([token["token_type_ids"]])
+            token_type_ids = torch.tensor(token_type_ids,dtype=torch.long).to(device)
+
+            logit = self.model(mode="text_to_logit", input=text, bert_mask=mask, bert_token_id=token_type_ids).squeeze(0)
+
+        else:
+            token = self.tokenize(x)
+            input_vector=torch.from_numpy(token).to(device).to(torch.long)
+            logit = self.model(mode="text_to_logit",input=input_vector).squeeze(0)
+
         p = F.softmax(logit).detach().cpu().numpy()
         return p
         
@@ -139,9 +169,9 @@ class GeneticAdversary_Snli(Adversary):
         total = 0
         acc = 0
 
-        texts_p = texts_p[opts.h_test_start:opts.h_test_start+opts.genetic_test_num]
-        texts_h = texts_h[opts.h_test_start:opts.h_test_start+opts.genetic_test_num]
-        labels = labels[opts.h_test_start:opts.h_test_start+opts.genetic_test_num]
+        #texts_p = texts_p[opts.h_test_start:opts.h_test_start+opts.genetic_test_num]
+        #texts_h = texts_h[opts.h_test_start:opts.h_test_start+opts.genetic_test_num]
+        #labels = labels[opts.h_test_start:opts.h_test_start+opts.genetic_test_num]
 
         for x_p, x_h, y in zip(texts_p, texts_h, labels):
 
@@ -231,8 +261,8 @@ class GeneticAdversary(Adversary):
         total = 0
         acc = 0
 
-        texts = texts[opts.h_test_start:opts.h_test_start+opts.genetic_test_num]
-        labels = labels[opts.h_test_start:opts.h_test_start+opts.genetic_test_num]
+        #texts = texts[opts.h_test_start:opts.h_test_start+opts.genetic_test_num]
+        #labels = labels[opts.h_test_start:opts.h_test_start+opts.genetic_test_num]
 
         for x, y in zip(texts, labels):
             words = x.split()

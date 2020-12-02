@@ -90,11 +90,9 @@ class bpda_get_embd_adv(torch.autograd.Function):
 
 
 class AdvBaseModel(BaseModel):
-    def __init__(self, opt, is_bert=False):
-        super(AdvBaseModel, self).__init__(opt,is_bert=is_bert)
+    def __init__(self, opt ):
+        super(AdvBaseModel, self).__init__(opt)
         self.opt=opt
-        if is_bert:
-            return
 
         """
         # inverse embedding
@@ -148,119 +146,6 @@ class AdvBaseModel(BaseModel):
 
         self.eval_adv_mode = True
 
-    def normalize_embedding(self, weight, vocab_freq):
-        # input torch tensor
-        p = vocab_freq / vocab_freq.sum()
-        mean = torch.sum(p.unsqueeze(1)*weight, dim=0).unsqueeze(0)
-        var = torch.sum(p.unsqueeze(1)*torch.pow(weight-mean,2), dim=0).unsqueeze(0)
-        stddev = torch.sqrt(var+1e-6)
-        return p.unsqueeze(1)*(weight-mean)/stddev # if p==0, use zero vector
-
-    def update_linear_transform_embd(self):
-        weight=self.inverse_linear_transform_embd.weight.detach().cpu() # W x +b 
-        bias=self.inverse_linear_transform_embd.bias.detach().cpu()
-
-        weight = weight.numpy()
-        weight = np.matrix(weight)
-        weight = np.linalg.pinv(weight)
-        weight = torch.FloatTensor(weight)
-
-        self.linear_transform_embd.weight=nn.Parameter(weight)  
-        bias = -bias.reshape(1,-1).mm(weight.transpose(0,1)) 
-        bias = bias.squeeze()
-        self.linear_transform_embd.bias=nn.Parameter(bias) 
-
-    def update_inverse_linear_transform_embd(self):
-        weight=self.linear_transform_embd.weight.detach().cpu() # W x +b 
-        bias=self.linear_transform_embd.bias.detach().cpu()
-
-        weight = weight.numpy()
-        weight = np.matrix(weight)
-        weight = np.linalg.pinv(weight)
-        weight = torch.FloatTensor(weight)
-
-        self.inverse_linear_transform_embd.weight=nn.Parameter(weight)  
-        bias = -bias.reshape(1,-1).mm(weight.transpose(0,1)) 
-        bias = bias.squeeze()
-        self.inverse_linear_transform_embd.bias=nn.Parameter(bias) 
-
-
-    def loss_radius(self, roots, synonyms):
-        embd_roots = self.text_to_embd(roots.reshape(-1,1))
-        embd_synonyms = self.text_to_embd(synonyms)
-        n, len_syn_set, embd_dim = embd_synonyms.shape
-        delta = (embd_synonyms-embd_roots).reshape(-1, embd_dim)
-
-        radius = torch.nn.functional.pairwise_distance(delta, torch.zeros_like(delta), p=2.0) # n*len_syn_set,
-        max_radius, _ = radius.reshape(n, len_syn_set).max(-1)
-        
-        for i in range(n):
-            self.word_synonym_radius.weight[roots[i],0]=max_radius[i]
-        
-        print(max_radius.mean())
-
-        #saved_radius = self.word_synonym_radius(roots).squeeze() # n
-        #return torch.nn.functional.mse_loss(max_radius, saved_radius, reduction='mean')
-
-    def l2_project(self, grad):
-
-        N, L, E = grad.shape
-
-        torch_small_constant = 1e-12*torch.ones(N,L,1).to(grad.dtype).to(grad.device)
-
-        grad_norm=grad*grad
-        grad_norm=torch.sum(grad_norm, dim=-1, keepdim=True)
-        grad_norm = torch.sqrt(grad_norm)
-        grad_norm = torch.max(torch_small_constant, grad_norm)
-        grad = grad / grad_norm
-
-        return grad
-
-    def l2_project_sent(self, grad):
-    
-        N, L, E = grad.shape
-
-        torch_small_constant = 1e-12*torch.ones(N,1,1).to(grad.dtype).to(grad.device)
-
-        grad_norm=grad*grad
-        grad_norm=torch.sum(grad_norm, dim=(1,2), keepdim=True)
-        grad_norm = torch.sqrt(grad_norm)
-        grad_norm = torch.max(torch_small_constant, grad_norm)
-        grad = grad / grad_norm
-
-        return grad
-
-    def l2_clip(self, pert, eps):
-    
-        N, L, E = pert.shape
-        torch_small_constant = 1e-12*torch.ones(N,L,1).to(pert.dtype).to(pert.device)
-        
-        torch_ones = torch.ones_like(pert)
-
-        pert_norm=pert*pert
-        pert_norm=torch.sum(pert_norm, dim=-1, keepdim=True)
-        pert_norm = torch.sqrt(pert_norm)
-        pert_norm = torch.max(torch_small_constant, pert_norm)
-        ratio = eps / pert_norm
-        ratio = torch.min(torch_ones, ratio)
-
-        return pert*ratio
-
-    def l2_clip_sent(self, pert, eps):
-        
-        N, L, E = pert.shape
-        torch_small_constant = 1e-12*torch.ones(N,1,1).to(pert.dtype).to(pert.device)
-        
-        torch_ones = torch.ones_like(pert)
-
-        pert_norm=pert*pert
-        pert_norm=torch.sum(pert_norm, dim=(1,2), keepdim=True)
-        pert_norm = torch.sqrt(pert_norm)
-        pert_norm = torch.max(torch_small_constant, pert_norm)
-        ratio = eps / pert_norm
-        ratio = torch.min(torch_ones, ratio)
-
-        return pert*ratio
 
     def get_adv_by_convex_syn(self, embd, y, syn, syn_valid, text_like_syn, attack_type_dict, text_for_vis, record_for_vis):
         
@@ -307,8 +192,7 @@ class AdvBaseModel(BaseModel):
 
 
         embd_ori=embd.detach()
-        with torch.no_grad():
-            logit_ori = self.embd_to_logit(embd_ori)
+        logit_ori = self.embd_to_logit(embd_ori)
 
         for _ in range(num_steps):
             optimizer.zero_grad()
@@ -365,15 +249,6 @@ class AdvBaseModel(BaseModel):
                         sys.exit()
                         
 
-        """
-        out = get_comb(comb_p, syn)
-        delta = (out-embd_ori).reshape(batch_size*text_len,embd_dim)
-        delta = F.pairwise_distance(delta, torch.zeros_like(delta), p=2.0)
-        valid = (delta>0.01).to(device).to(delta.dtype)
-        delta = (valid*delta).sum()/valid.sum()
-        print("mean l2 dis between embd and embd_adv:", delta.data.item())
-        #print("mean max comb_p:", (comb_p.max(-2)[0]).mean().data.item())
-        """
 
         if out_type == "text":
             # need to be fix, has potential bugs. the trigger dependes on data.
@@ -421,143 +296,6 @@ class AdvBaseModel(BaseModel):
             embd = self.linear_transform_embd_1(embd)
         return embd
 
-    def get_adv_hotflip(self, x, y, syn_valid, text_like_syn, attack_type_dict):
-        
-        # record context
-        self_training_context = self.training
-        # set context
-        if self.eval_adv_mode:
-            self.eval()
-        else:
-            self.train()
-
-        device = x.device
-        # get param of attacks
-
-        num_steps=attack_type_dict['num_steps']
-        loss_func=attack_type_dict['loss_func']
-
-        batch_size, text_len = x.shape
-
-        #onehot_input = self.get_onehot_from_input(x) #bs, len, len_of_vocab
-        onehot_mask = self.get_onehot_mask_from_syn(syn_valid, text_like_syn)
-        #9.25 04:09
-        #embd = self.get_embd_from_onehot(onehot_input)
-        embd = self.text_to_embd(x)
-        logit = self.embd_to_logit(embd)
-
-        x_adv = torch.zeros_like(x)
-        x_adv = x.detach()
-
-        """
-        onehot_input_adv = self.get_onehot_from_input(x) #bs, len, len_of_vocab
-        onehot_input_adv.requires_grad_()
-        with torch.enable_grad():
-            embd_temp = self.get_embd_from_onehot(onehot_input_adv)
-            logit_temp = self.embd_to_logit(embd_temp)
-            if loss_func=='ce':
-                loss = F.cross_entropy(logit_temp, y, reduction='sum')
-            elif loss_func=='kl':
-                criterion_kl = nn.KLDivLoss(reduction="sum")
-                loss = criterion_kl(F.log_softmax(logit_temp, dim=1), F.softmax(logit, dim=1))
-
-            grad = torch.autograd.grad(loss, [onehot_input_adv])[0]
-        """
-
-        for i in range(num_steps):
-            embd_adv = self.text_to_embd(x_adv)
-            embd_adv.requires_grad_()
-            with torch.enable_grad():
-                logit_adv = self.embd_to_logit(embd_adv)
-                if loss_func=='ce':
-                    loss = F.cross_entropy(logit_adv, y, reduction='sum')
-                elif loss_func=='kl':
-                    criterion_kl = nn.KLDivLoss(reduction="sum")
-                    loss = criterion_kl(F.log_softmax(logit_adv, dim=1), F.softmax(logit, dim=1))
-
-                grad_embd = torch.autograd.grad(loss, [embd_adv])[0]
-
-            with torch.no_grad():
-                if self.opt.embd_transform:
-                    grad_onehot = torch.mm( grad_embd.reshape(batch_size*text_len,-1), torch.mm(self.embedding.weight, self.linear_transform_embd_1.weight.permute(1,0)).permute(1,0) )
-                else:
-                    grad_onehot = torch.mm( grad_embd.reshape(batch_size*text_len,-1), self.embedding.weight.permute(1,0) )
-                grad_onehot =  grad_onehot.reshape(batch_size, text_len, -1) * (onehot_mask)
-                _, argmax = torch.max(grad_onehot, -1)
-
-                x_adv = x_adv*(argmax==0).to(x_adv.dtype) + argmax
-                x_adv = x_adv.detach()
-
-        # resume context
-        if self_training_context == True:
-            self.train()
-        else:
-            self.eval()
-
-        return x_adv.detach()
-
-    """
-    def get_adv_hotflip(self, x, y, syn_valid, text_like_syn, attack_type_dict):
-        
-        # record context
-        self_training_context = self.training
-        # set context
-        if self.eval_adv_mode:
-            self.eval()
-        else:
-            self.train()
-
-        device = x.device
-        # get param of attacks
-
-        num_steps=attack_type_dict['num_steps']
-        loss_func=attack_type_dict['loss_func']
-
-        batch_size, text_len = x.shape
-
-        onehot_input = self.get_onehot_from_input(x) #bs, len, len_of_vocab
-        onehot_mask = self.get_onehot_mask_from_syn(syn_valid, text_like_syn)
-        #9.25 04:09
-        #embd = self.get_embd_from_onehot(onehot_input)
-        embd = self.text_to_embd(x)
-        logit = self.embd_to_logit(embd)
-
-        x_adv = torch.zeros_like(x)
-        x_adv = x.detach()
-
-        onehot_input_adv = torch.zeros_like(onehot_input)
-        onehot_input_adv = onehot_input.detach()
-
-        for i in range(num_steps):
-            onehot_input_adv.requires_grad_()
-            with torch.enable_grad():
-                embd_adv = self.get_embd_from_onehot(onehot_input_adv)
-                logit_adv = self.embd_to_logit(embd_adv)
-                if loss_func=='ce':
-                    loss = F.cross_entropy(logit_adv, y, reduction='sum')
-                elif loss_func=='kl':
-                    criterion_kl = nn.KLDivLoss(reduction="sum")
-                    loss = criterion_kl(F.log_softmax(logit_adv, dim=1), F.softmax(logit, dim=1))
-
-                grad = torch.autograd.grad(loss, [onehot_input_adv])[0] * (onehot_mask)
-
-            _, argmax = torch.max(grad, -1)
-
-            #modify onehot_input_adv 
-
-            temp = -1*onehot_input_adv*(argmax!=0).to(torch.float).unsqueeze(-1) + onehot_input_adv
-            onehot_input_adv = (temp + self.get_onehot_from_input(argmax)*(argmax!=0).to(torch.float).unsqueeze(-1)).detach()
-
-        # resume context
-        if self_training_context == True:
-            self.train()
-        else:
-            self.eval()
-
-        _, out = torch.max(onehot_input_adv,-1)
-
-        return out.detach()
-    """
 
     def get_embd_adv(self, embd, y, attack_type_dict):
         
@@ -678,7 +416,7 @@ class AdvBaseModel(BaseModel):
             #x = self.linear_transform_embd_3(x)
         return x
 
-    def forward(self, mode, input, comb_p = None, label=None, text_like_syn_embd=None, text_like_syn_valid=None, text_like_syn=None, attack_type_dict=None, text_for_vis=None, record_for_vis=None):
+    def forward(self, mode, input, comb_p = None, label=None, text_like_syn_embd=None, text_like_syn_valid=None, text_like_syn=None, attack_type_dict=None, bert_mask=None, bert_token_id=None,text_for_vis=None, record_for_vis=None):
         if mode == "get_embd_adv":
             assert(attack_type_dict is not None)
             out = self.get_embd_adv(input, label, attack_type_dict)
@@ -720,71 +458,9 @@ class AdvBaseModel(BaseModel):
         if mode == "loss_radius":
             out = self.loss_radius(input, label)
 
-        if mode == "get_adv_hotflip":
-            assert(attack_type_dict is not None)
-            assert(text_like_syn is not None)
-            assert(text_like_syn_valid is not None)
-            out = self.get_adv_hotflip(input, label, text_like_syn_valid, text_like_syn, attack_type_dict)
 
 
         return out
 
 
 
-
-""" ori
-    def get_embd_adv(self, embd, y, attack_type_dict):
-        
-        # record context
-        self_training_context = self.training
-        # set context
-        self.eval()
-
-        device = embd.device
-        # get param of attacks
-
-        num_steps=attack_type_dict['num_steps']
-        step_size=attack_type_dict['step_size']
-        random_start=attack_type_dict['random_start']
-        epsilon=attack_type_dict['epsilon']
-        loss_func=attack_type_dict['loss_func']
-        direction=attack_type_dict['direction']
-
-        batch_size=len(embd)
-
-        embd_ori = embd
-        
-        # random start
-        if random_start:
-            embd_adv = embd_ori.detach() + 0.001 * torch.randn(embd_ori.shape).to(device).detach()
-        else:
-            embd_adv = embd_ori.detach()
-
-
-        for _ in range(num_steps):
-            embd_adv.requires_grad_()
-            grad = 0
-            with torch.enable_grad():
-                if loss_func=='ce':
-                    logit_adv = self.embd_to_logit(embd_adv)
-                    if direction == "towards":
-                        loss = -F.cross_entropy(logit_adv, y, reduction='sum')
-                    elif direction == "away":
-                        loss = F.cross_entropy(logit_adv, y, reduction='sum')
-                grad = torch.autograd.grad(loss, [embd_adv])[0]
-
-            grad=self.l2_project(grad)
-
-            embd_adv = embd_adv.detach() + step_size * grad.detach()
-            
-            perturbation = self.l2_clip(embd_adv-embd_ori, epsilon)
-            embd_adv = embd_ori.detach() + perturbation.detach()
-            
-        # resume context
-        if self_training_context == True:
-            self.train()
-        else:
-            self.eval()
-
-        return embd_adv.detach()
-"""

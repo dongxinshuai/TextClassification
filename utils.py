@@ -117,6 +117,27 @@ def evaluation(opt, device, model,test_iter):
     model.train()
     return np.mean(accuracy)
 
+def evaluation_bert(opt, device, model,test_iter):
+    model.eval()
+    accuracy=[]
+#    batch= next(iter(test_iter))
+    for index,batch in enumerate( test_iter):
+        text = batch[0].to(device)
+        label = batch[1].to(device)
+        bert_mask= batch[4].to(device)
+        bert_token_id= batch[5].to(device)
+
+        predicted = model(mode='text_to_logit',input=text, bert_mask=bert_mask, bert_token_id=bert_token_id)
+        prob, idx = torch.max(predicted, 1) 
+        percision=(idx==label).float().mean()
+        
+        if torch.cuda.is_available():
+            accuracy.append(percision.data.item() )
+        else:
+            accuracy.append(percision.data.numpy()[0] )
+    model.train()
+    return np.mean(accuracy)
+
 
 def snli_evaluation_adv(opt, device, model,test_iter,tokenizer):
     model.eval()
@@ -226,7 +247,79 @@ def evaluation_adv(opt, device, model, test_iter, tokenizer):
 
     return np.mean(accuracy)
 
+def evaluation_adv_bert(opt, device, model, test_iter, tokenizer):
+    model.eval()
+    accuracy=[]
+    record_for_vis = {}
+    record_for_vis["comb_p_list"] = []
+    record_for_vis["embd_syn_list"] = []
+    record_for_vis["syn_valid_list"] = []
+    record_for_vis["text_syn_list"] = []
 
+#    batch= next(iter(test_iter))
+    if opt.pert_set=="convex_combination":
+        print("ad test by convex_combination.")
+    for index,batch in enumerate( test_iter):
+        text = batch[0].to(device)
+        label = batch[1].to(device)
+        text_like_syn= batch[2].to(device)
+        text_like_syn_valid= batch[3].to(device)
+        bert_mask= batch[4].to(device)
+        bert_token_id= batch[5].to(device)
+
+        batch_size = len(text)
+        if index*batch_size > 1000:
+            break
+
+        
+        attack_type_dict = {
+            'num_steps': opt.test_attack_iters,
+            'loss_func': 'ce',
+            'w_optm_lr': opt.w_optm_lr,
+            'sparse_weight': opt.attack_sparse_weight,
+            'out_type': "text"
+        }
+        embd = model(mode="text_to_embd", input=text, bert_mask=bert_mask, bert_token_id=bert_token_id) #in bs, len sent, vocab
+        n,l,s = text_like_syn.shape
+        text_like_syn_embd = model(mode="text_to_embd", input=text_like_syn.reshape(n*l,s), bert_mask=bert_mask.reshape(n,l,1).repeat(1,1,s).reshape(n*l,s), bert_token_id=bert_token_id.reshape(n,l,1).repeat(1,1,s).reshape(n*l,s)).reshape(n,l,s,-1)
+        text_adv = model(mode="get_adv_by_convex_syn", input=embd, label=label, text_like_syn_embd=text_like_syn_embd, text_like_syn_valid=text_like_syn_valid, text_like_syn=text_like_syn, attack_type_dict=attack_type_dict, bert_mask=bert_mask, bert_token_id=bert_token_id, text_for_vis=text, record_for_vis=record_for_vis)
+        predicted_adv = model(mode="text_to_logit", input=text_adv, bert_mask=bert_mask, bert_token_id=bert_token_id)
+        
+
+        """
+        attack_type_dict = {
+            'num_steps': opt.test_attack_iters,
+            'loss_func': 'ce',
+            'w_optm_lr': opt.w_optm_lr,
+            'sparse_weight': opt.attack_sparse_weight,
+            'out_type': "comb_p"
+        }
+
+        with torch.no_grad():
+            embd = model(mode="text_to_embd", input=text, bert_mask=bert_mask, bert_token_id=bert_token_id) #in bs, len sent, vocab
+        n,l,s = text_like_syn.shape
+        with torch.no_grad():
+            text_like_syn_embd = model(mode="text_to_embd", input=text_like_syn.reshape(n*l,s), bert_mask=bert_mask.reshape(n,l,1).repeat(1,1,s).reshape(n*l,s), bert_token_id=bert_token_id.reshape(n,l,1).repeat(1,1,s).reshape(n*l,s)).reshape(n,l,s,-1)
+        adv_comb_p = model(mode="get_adv_by_convex_syn", input=embd, label=label, text_like_syn_embd=text_like_syn_embd, text_like_syn_valid=text_like_syn_valid, attack_type_dict=attack_type_dict, bert_mask=bert_mask, bert_token_id=bert_token_id)
+            
+        predicted_adv = model(mode="text_syn_p_to_logit", input=text_like_syn, comb_p=adv_comb_p, bert_mask=bert_mask, bert_token_id=bert_token_id)
+        """
+
+        #print("_________________________________")
+        #print(inverse_tokenize(tokenizer, text[0]))
+        #print(inverse_tokenize(tokenizer, text_adv[0]))
+
+        prob, idx = torch.max(predicted_adv, 1) 
+        percision=(idx==label).float().mean()
+        
+        if torch.cuda.is_available():
+            accuracy.append(percision.data.item() )
+        else:
+            accuracy.append(percision.data.numpy()[0] )
+    model.train()
+
+
+    return np.mean(accuracy)
 
 def evaluation_hotflip_adv(opt, device, model, test_iter, tokenizer):
     model.eval()

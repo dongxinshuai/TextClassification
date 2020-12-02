@@ -23,8 +23,8 @@ from .LSTMBI import LSTMBI, AdvLSTMBI
 from .Transformer import AttentionIsAllYouNeed
 from .SelfAttention import SelfAttention
 from .LSTMwithAttention import LSTMAttention
-from .BERTFast import BERTFast
-from .BERT import BERT
+#from .BERTFast import BERTFast
+from .BERT import AdvBERT
 from .ForSnli import AdvDecAtt, AdvDecAtt_FromCert, AdvBOW, AdvEntailmentCNN
 #from .BaseModelAdv import  KIMCNN1D_Adv
 def setup(opt):
@@ -72,10 +72,10 @@ def setup(opt):
         model = SelfAttention(opt)
     elif opt.model == "lstm_attention":
         model =LSTMAttention(opt)
-    elif opt.model == "bert":
-        model =BERTFast(opt)
-    elif opt.model == "bert_selfmade":
-        model =BERT(opt)
+    #elif opt.model == "bertfast":
+    #    model =BERTFast(opt)
+    elif opt.model == "bert_adv":
+        model =AdvBERT(opt)
     else:
         raise Exception("model not supported: {}".format(opt.model))
     return model

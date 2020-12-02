@@ -7,10 +7,13 @@ from torch import nn
 from collections import OrderedDict
 import os
 class BaseModel(nn.Module):
-    def __init__(self, opt ):
+    def __init__(self, opt, is_bert=False ):
         super(BaseModel, self).__init__()
         self.model_name = 'BaseModel'
         self.opt=opt
+        if is_bert:
+            return
+
         
         self.encoder = nn.Embedding(opt.vocab_size,opt.embedding_dim)
         if opt.__dict__.get("embeddings",None) is not None:

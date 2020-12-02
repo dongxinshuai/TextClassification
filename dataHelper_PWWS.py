@@ -14,10 +14,10 @@ import torch
 from torch.autograd import Variable
 
 from PWWS.read_files import split_imdb_files, split_yahoo_files, split_agnews_files, split_snli_files
-from PWWS.word_level_process import word_process, get_tokenizer, update_tokenizer, text_process_for_single, label_process_for_single
+from PWWS.word_level_process import word_process, get_tokenizer, update_tokenizer, text_process_for_single, label_process_for_single, text_process_for_single_bert
 from PWWS.neural_networks import get_embedding_index, get_embedding_matrix
 
-from PWWS.paraphrase import generate_synonym_list_from_word, generate_synonym_list_by_dict
+from PWWS.paraphrase import generate_synonym_list_from_word, generate_synonym_list_by_dict, get_syn_dict
 from PWWS.config import config
 
 from torchvision.datasets.vision import VisionDataset
@@ -308,6 +308,61 @@ class SynthesizedData_TextLikeSyn(SynthesizedData):
             neg.append([0 for i in range(num_neg_per_anch)])
 
         return self.transform(sent, label, anch, pos, neg, anch_valid, text_like_syn, text_like_syn_valid)
+
+
+class SynthesizedData_TextLikeSyn_Bert(SynthesizedData):
+    
+    def __init__(self, opt, x, y, syn_data, seq_max_len, tokenizer):
+        self.x = x.copy()
+        self.y = y.copy()
+        self.syn_data = syn_data.copy()
+        self.seq_max_len = seq_max_len
+        self.tokenizer = tokenizer
+
+        #for x in self.syn_data:
+        #    self.syn_data[x] = [syn_word for syn_word in self.syn_data[x] if syn_word!=x]
+
+        #self.len_voc = len(self.syn_data)+1
+        #super(SynthesizedData_TextLikeSyn_Bert, self).__init__(opt, x, y, syn_data)
+
+    def transform(self, sent, label, text_like_syn, text_like_syn_valid, mask, token_type_ids):
+       
+        return torch.tensor(sent,dtype=torch.long), torch.tensor(label,dtype=torch.long), torch.tensor(text_like_syn,dtype=torch.long), torch.tensor(text_like_syn_valid,dtype=torch.float), torch.tensor(mask, dtype = torch.long), torch.tensor(token_type_ids, dtype = torch.long)
+
+    def __getitem__(self, index, num_text_like_syn=10):
+
+        encoded = self.tokenizer.encode_plus(self.x[index], None, add_special_tokens = True, max_length = self.seq_max_len, pad_to_max_length = True)
+
+        sent = encoded["input_ids"]
+        mask = encoded["attention_mask"]
+        token_type_ids = encoded["token_type_ids"]
+
+        text_like_syn=[]
+        text_like_syn_valid=[]
+        for token in sent:
+            text_like_syn_valid.append([])
+            text_like_syn.append([token])
+
+        splited_words = self.x[index].split()
+
+        for i in range(min(self.seq_max_len-2, len(splited_words))):
+            word = splited_words[i]
+            if word in self.syn_data:
+                text_like_syn[i+1].extend(self.syn_data[word])
+
+        label = self.y[index].argmax()
+
+        for i, x in enumerate(sent):
+            text_like_syn_valid[i] = [1 for times in range(len(text_like_syn[i]))]
+            
+            while(len(text_like_syn[i])<num_text_like_syn):
+                text_like_syn[i].append(0)
+                text_like_syn_valid[i].append(0)
+
+            assert(len(text_like_syn[i])==num_text_like_syn)
+            assert(len(text_like_syn_valid[i])==num_text_like_syn)
+
+        return self.transform(sent, label, text_like_syn, text_like_syn_valid, mask, token_type_ids)
 
 
 class Snli_SynthesizedData_TextLikeSyn(torch.utils.data.Dataset):
@@ -984,7 +1039,132 @@ def make_synthesized_iter(opt):
     test_loader = torch.utils.data.DataLoader(test_data, opt.test_batch_size, shuffle=False, num_workers=8)
     return train_loader, dev_loader, test_loader, syn_data
     
+def save_word_vectors_for_show(opt):
 
+    assert(opt.synonyms_from_file)
+    filename= opt.synonyms_file_path
+    f=open(filename,'rb')
+    saved=pickle.load(f)
+    f.close()
+    syn_data = saved["syn_data"]
+    opt.embeddings=saved['embeddings']
+    f.close()
+
+    for_save = []
+
+    for i, syn in enumerate(syn_data):
+        if len(for_save) == 100:
+            break
+        if len(syn) ==5:
+            for_save.append((opt.embeddings[i].numpy(), [opt.embeddings[x].numpy() for x in syn]))
+        
+    f=open('word_vectors_for_show_5.pickle','wb')
+    pickle.dump(for_save, f)
+    f.close()
+
+    print("Done save word vectors for show.")
+
+    return
+    
+
+def make_synthesized_iter_for_bert(opt):
+    dataset=opt.dataset
+    if dataset == 'imdb':
+        opt.label_size = 2
+        train_texts, train_labels, dev_texts, dev_labels, test_texts, test_labels = split_imdb_files()
+    elif dataset == 'snli':
+        opt.label_size = 2
+        train_perms, train_hypos, train_labels, dev_perms, dev_hypos, dev_labels, test_perms, test_hypos, test_labels = split_snli_files()
+    elif dataset == 'agnews':
+        # opt.label_size = ?
+        train_texts, train_labels, test_texts, test_labels = split_agnews_files()
+    elif dataset == 'yahoo':
+        # opt.label_size = ?
+        train_texts, train_labels, test_texts, test_labels = split_yahoo_files()
+            
+
+    from modified_bert_tokenizer import ModifiedBertTokenizer
+    #import transformers
+    #tokenizer = transformers.BertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
+    tokenizer = ModifiedBertTokenizer.from_pretrained("bert-base-uncased", do_lower_case=True)
+
+    if opt.bert_synonyms_from_file:
+        filename= opt.bert_synonyms_file_path
+        f=open(filename,'rb')
+        saved=pickle.load(f)
+        f.close()
+        syn_data = saved["syn_data"]
+        #x_train=saved['x_train']
+        #x_test=saved['x_test']
+        #x_dev=saved['x_dev']
+        y_train=saved['y_train']
+        y_test=saved['y_test']
+        y_dev=saved['y_dev']
+
+    else:
+        #tokenizer = get_tokenizer(opt.dataset)
+        #print("len of tokenizer before updata.", len(tokenizer.index_word))
+        print("Preparing synonyms.")
+
+        syn_dict = get_syn_dict()
+        syn_data = {} # key is textual word
+
+        # Tokenize syn data
+        print("Tokenize syn data.")
+        for key in syn_dict:
+            if len(syn_dict[key])!=0:
+                temp = tokenizer.encode_plus(syn_dict[key], None, add_special_tokens=False, pad_to_max_length=False)['input_ids']
+
+                token_of_key = tokenizer.encode_plus(key, None, add_special_tokens=False, pad_to_max_length=False)["input_ids"][0]
+
+                syn_data[key] = temp
+
+                #if not token_of_key in syn_data:
+                #    syn_data[token_of_key] = temp
+                #else:
+                #    syn_data[token_of_key].append(temp)
+
+        # Tokenize the training data
+        print("Tokenize training data.")
+        #x_train, y_train, x_test, y_test = word_process(train_texts, train_labels, test_texts, test_labels, dataset)
+        
+        #x_train = text_process_for_single_bert(tokenizer, train_texts, opt.dataset)
+        y_train = label_process_for_single(train_labels, opt.dataset)
+
+        #x_dev = text_process_for_single_bert(tokenizer, dev_texts, opt.dataset)
+        y_dev = label_process_for_single(dev_labels, opt.dataset)
+
+        #x_test = text_process_for_single_bert(tokenizer, test_texts, opt.dataset)
+        y_test = label_process_for_single(test_labels, opt.dataset)
+ 
+
+        filename= opt.bert_synonyms_file_path
+        f=open(filename,'wb')
+        saved={}
+        saved['syn_data']=syn_data
+        #saved['x_train']=x_train
+        #saved['x_test']=x_test
+        #saved['x_dev']=x_dev
+        saved['y_train']=y_train
+        saved['y_test']=y_test
+        saved['y_dev']=y_dev
+        pickle.dump(saved,f)
+        f.close()
+
+    from PWWS.config import config
+    seq_max_len = config.word_max_len[opt.dataset]
+
+    train_data = SynthesizedData_TextLikeSyn_Bert(opt, train_texts, y_train, syn_data, seq_max_len, tokenizer)
+    train_data.__getitem__(0)
+    train_loader = torch.utils.data.DataLoader(train_data, opt.batch_size, shuffle=True, num_workers=8)
+
+    # use training data as dev
+    dev_data = SynthesizedData_TextLikeSyn_Bert(opt, dev_texts, y_dev, syn_data, seq_max_len, tokenizer)
+    dev_loader = torch.utils.data.DataLoader(dev_data, opt.test_batch_size, shuffle=False, num_workers=8)
+
+    test_data = SynthesizedData_TextLikeSyn_Bert(opt, test_texts, y_test, syn_data, seq_max_len, tokenizer)
+    test_loader = torch.utils.data.DataLoader(test_data, opt.test_batch_size, shuffle=False, num_workers=8)
+    return train_loader, dev_loader, test_loader, syn_data
 
 def load_synonyms_in_vocab(opt, max_synonym_num = 1000):
     if opt.synonyms_from_file:

@@ -65,13 +65,15 @@ def test(opt,train_iter, test_iter, verbose=True):
 
     from PWWS.word_level_process import word_process, get_tokenizer
     tokenizer = get_tokenizer(opt.dataset)
-    #adv_acc=utils.snli_evaluation_adv(opt, device, model, test_iter, tokenizer)
+    adv_acc=utils.snli_evaluation_adv(opt, device, model, test_iter, tokenizer)
+    print('g_adv_acc',adv_acc)
+
 
     from from_certified.attack_surface import WordSubstitutionAttackSurface, LMConstrainedAttackSurface
     if opt.lm_constraint:
         attack_surface = LMConstrainedAttackSurface.from_files(opt.certified_neighbors_file, opt.snli_lm_file)
     else:
-        attack_surface = WordSubstitutionAttackSurface.from_file(opt.certified_neighbors_file)
+        attack_surface = WordSubstitutionAttackSurface.from_files(opt.certified_neighbors_file, opt.snli_lm_file)
 
     genetic_attack_snli(opt, device, model, attack_surface, dataset=opt.dataset, genetic_test_num=opt.genetic_test_num)
 
